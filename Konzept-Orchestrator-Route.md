@@ -345,12 +345,155 @@ bleibt bei dir, sonst ist die ganze Freigabeschicht wertlos.
 ⑥  Brücke pollt sessions/{id} + sessions/{id}/pr und wendet §4 an
 
 ⑦  Du siehst in Agency: zur Freigabe / blockiert / Done — mit PR-Stand
-   Merge bleibt eine eigene, ausdrückliche Entscheidung
+
+⑧  Kommt AO nicht weiter, oder ist der PR mergereif, wirft die Brücke eine
+   eigene Folgekarte (§7) — die Ursprungskarte bleibt gesperrt, solange
+   ihr Job läuft. Merge bleibt eine eigene, ausdrückliche Entscheidung
 ```
 
 ---
 
-## 7. Bauabschnitte
+## 7. Der Rückkanal: Folgeentscheidungen als eigene Karten
+
+### 7.1 Warum nicht auf derselben Karte
+
+Agency sperrt eine Karte, solange ein Job zu ihr offen ist:
+
+```js
+if (payload.action !== "no") {
+  const inFlight = ... WHERE idea_id = ? AND status IN ('queued','running')
+  if (inFlight) return 409 "Agency is already working on this card"
+}
+```
+> `app/api/ideas/action/route.ts:31-35` — verifiziert
+
+Die Brücke hält den Job über den gesamten AO-Lauf auf `running`. Die
+Ursprungskarte ist damit für Stunden unklickbar: kein „Change", kein Abbruch,
+keine Nachschärfung. **Der Hinweg ist einmalig.** Alles, was danach kommt, muss
+über eine **neue Karte mit eigenem `dedupeKey`** laufen — dann greift die Sperre
+nicht, weil es eine andere `idea_id` ist.
+
+Das passt zu Agencys eigenem Modell: eine Karte trägt genau eine Entscheidung.
+
+### 7.2 Wann überhaupt eine Folgekarte entsteht
+
+Der häufigste Fehler wäre, bei jedem roten CI sofort eine Karte zu werfen. Das
+darf nicht passieren — dein Projekt hat `autoReview: true`, und deine
+`orchestratorRules` geben Review- und CI-Probleme bereits an denselben Worker
+zurück. Diese Schleife soll laufen, ohne dich zu behelligen.
+
+> **Eine Folgekarte entsteht erst, wenn AO von selbst nicht weiterkommt —
+> oder wenn die Entscheidung ihrer Natur nach deine ist.**
+
+| Auslöser | Warten bis | Karte? |
+|---|---|---|
+| CI rot, Worker arbeitet noch | — | **nein**, AO regelt das |
+| Review verlangt Änderungen, Worker arbeitet noch | — | **nein** |
+| CI rot **und** Worker beendet/ohne Fortschritt | 2 aufeinanderfolgende Polls | **ja** |
+| `changes_requested` **und** Worker beendet | 2 Polls | **ja** |
+| Session `needs_input` | sofort | **ja** — sie wartet auf dich |
+| Kein Signal > 2 h | Frist | **ja** |
+| PR `approved` + CI grün + mergebar | sofort | **ja** — Merge ist immer deine Entscheidung |
+| PR `merged` | — | **nein**, das schließt die Ursprungskarte auf Done |
+
+### 7.3 Die Kartentypen
+
+| Typ | Do-Aktion bewirkt | AO-Route |
+|---|---|---|
+| **Merge** | PR mergen, nach Live-Prüfung (§7.5) | `POST /api/v1/prs/{id}/merge` |
+| **Nachbessern** | Fehlerliste an **denselben** Worker, kein neuer Spawn | `POST /api/v1/sessions/{workerId}/send` |
+| **Rückfrage** | deine Antwort an die wartende Session | `POST /api/v1/sessions/{id}/send` |
+| **Hänger** | Session beenden und Karte schließen | `POST /api/v1/sessions/{id}/kill` |
+| **Ergebnis ohne PR** (`localOnly`) | nur Kenntnisnahme, Job wird sofort `done/review` geschlossen | — |
+
+Die Karte trägt den Befund im Klartext: bei „Nachbessern" die fehlgeschlagenen
+Checks mit Namen, bei „Merge" Additions/Deletions und den Review-Stand. Der
+PR-Link geht über `data-radar-action="open"` + `data-radar-url` — `<a>` ist
+verboten.
+
+**„Nachbessern" spawnt nie einen neuen Worker.** Ein zweiter Worker am selben
+Branch ist die teuerste Art, sich Merge-Konflikte zu bauen.
+
+### 7.4 Schlüssel und Erkennung
+
+```
+Ursprungskarte:  <projekt>:<thema>
+Folgekarten:     <ursprungsKey>#merge@pr<nr>
+                 <ursprungsKey>#fix@<headSha7>
+                 <ursprungsKey>#ask@<sessionId>
+                 <ursprungsKey>#stalled@<sessionId>
+```
+
+Der Diskriminator hinter `@` ist entscheidend: Ein neuer Head nach einem
+Worker-Push erzeugt eine **neue** Fix-Karte, statt die alte mit veralteten
+Fehlern zu überschreiben. Ein Push ohne Head-Wechsel dagegen aktualisiert
+dieselbe Karte — und weil ein Upsert `version+1` setzt und die Karte auf `new`
+zurückholt, ist sie sofort wieder sichtbar.
+
+Die Brücke unterscheidet den Klick über `agentContext.ao.kind`
+(`dispatch | fix | ask | merge | abort`) und verzweigt danach — nicht mehr blind
+zum Orchestrator.
+
+Dabei gilt dieselbe Regel wie bei der Projekterkennung:
+
+> **Die Karte sagt nur, *worum* es geht. *Welche* PR-ID, *welche* Session-ID
+> angefasst wird, nimmt die Brücke aus ihrer eigenen Mapping-Tabelle und prüft
+> es live gegen AO.** Eine PR-Nummer aus Karten-HTML löst nie einen Merge aus.
+
+### 7.5 Merge — der einzige Weg, auf dem etwas endgültig wird
+
+Vor dem Merge prüft die Brücke **unmittelbar** noch einmal live:
+
+1. Head-SHA unverändert seit dem Schreiben der Karte,
+2. CI grün auf genau diesem Head,
+3. keine ungelösten Review-Threads,
+4. `mergeable` laut AO.
+
+Weicht irgendetwas ab — allen voran ein neuer Head — wird **nicht gemergt**.
+Der Job geht über den blockierten Pfad zurück, und die Brücke wirft eine neue
+Merge-Karte für den neuen Head.
+
+Der Grund ist simpel: Deine Freigabe galt dem Diff, den die Karte gezeigt hat.
+Ein Push danach ist ein anderer Diff und braucht eine neue Freigabe. `approved`
+allein reicht nie.
+
+### 7.6 Veraltete Folgekarten
+
+Eine Folgekarte kann sich erledigen, bevor du klickst — der Worker repariert CI
+doch noch, der PR wird anderswo gemergt.
+
+Die Brücke zieht solche Karten **nicht** selbst zurück. Ein `action:"no"` würde
+eine `feedback`-Zeile mit einer Entscheidung schreiben, die nie von dir kam,
+plus eine `card_interactions`-Zeile — es würde also genau das Lernsignal
+verfälschen, für das Agency gebaut ist (`app/api/ideas/action/route.ts:41-43`,
+verifiziert). Die Brücke klickt nicht, auch nicht zum Aufräumen.
+
+Stattdessen zwei Mechanismen:
+
+- **Spät werfen** (§7.2) verhindert die meisten veralteten Karten von vornherein.
+- **Selbstheilung beim Klick:** Klickst du eine veraltete Karte trotzdem, findet
+  die Live-Prüfung aus §7.5 den erledigten Zustand vor. Die Brücke führt dann
+  nichts aus, sondern schließt den Job mit `done/completed` und dem Ergebnis
+  „bereits erledigt" — die Karte wandert nach Done. Ein Fehlklick kostet also
+  nichts.
+
+Bleibt ein Rest: Eine erledigte Karte liegt bis zu deinem nächsten Blick im
+Stapel. Das ist der Preis dafür, dass niemand außer dir entscheidet — und er ist
+niedriger als ein Lernprofil, das die Brücke heimlich mitschreibt.
+
+### 7.7 Was bewusst nicht über Karten läuft
+
+Feinsteuerung eines laufenden Workers — nachfragen, umlenken, Zwischenstand
+erklären lassen — bleibt in AO, im Chat oder TUI der Session. Eine Karte ist
+eine Entscheidung, kein Gesprächskanal. Der Versuch, ein Gespräch über
+Kartenklicks zu führen, erzeugt nur Kartenmüll.
+
+Die Faustregel: **Wenn du dich zwischen zwei Möglichkeiten entscheidest, ist es
+eine Karte. Wenn du etwas erklärst, ist es AO.**
+
+---
+
+## 8. Bauabschnitte
 
 | Abschnitt | Inhalt | Akzeptanz |
 |---|---|---|
@@ -358,7 +501,8 @@ bleibt bei dir, sonst ist die ganze Freigabeschicht wertlos.
 | **2 — Auflösung allein** | `resolveProject()` als eigenes Modul, mit Tests gegen echte Projektdaten. Noch kein Dispatch | Origin-, Pfad- und Unterrepo-Fälle lösen korrekt auf; mehrdeutig und unbekannt melden sauber |
 | **3 — Dispatch** | Orchestrator finden/anlegen, Brief-Datei, `send`, Korrelation über `ag-<ideaId>` | Klick in Agency → binnen 60 s ein Worker mit diesem Namen im AO-Kanban |
 | **4 — Rückfluss** | Polling, §4-Tabelle, blockierter Pfad, Lease-Ping | PR öffnet → Karte wird „zur Freigabe"; Merge → Done; CI rot → blockierte Karte |
-| **5 — Ausbau** | SSE statt Polling, Merge-Karte, CI-Fehler-Karte | — |
+| **5 — Rückkanal** | Folgekarten nach §7, Dispatcher nach `ao.kind`, Live-Prüfung vor Merge | CI rot + Worker beendet → Fix-Karte; `approved` + grün → Merge-Karte; Klick auf veraltete Karte schließt sie folgenlos |
+| **6 — Ausbau** | SSE statt Polling, Kadenz für den Runner | — |
 
 Abschnitt 2 lohnt sich als eigener Schritt: Er ist die einzige neue Logik hier,
 er ist ohne laufenden Worker testbar, und ein Fehler darin schreibt ins falsche
@@ -366,7 +510,7 @@ Repo.
 
 ---
 
-## 8. Offen — vor Abschnitt 3 zu klären
+## 9. Offen — vor Abschnitt 3 zu klären
 
 | # | Frage | Wie zu beantworten |
 |---|---|---|
@@ -374,6 +518,9 @@ Repo.
 | 2 | Wie heißt das Feld für den Anzeigenamen einer Session in `GET /api/v1/sessions`? | live prüfen — die Korrelation hängt daran |
 | 3 | Wann gilt eine frisch angelegte Orchestrator-Session als empfangsbereit? | beobachten; notfalls kurz pollen, bevor gesendet wird |
 | 4 | Welches reale Repo wird Pilotprojekt? | `testao` ist archiviert und scheidet aus |
+| 5 | Nimmt `POST /api/v1/prs/{id}/merge` die PR-ID oder die Session-ID? | live prüfen — betrifft die Merge-Karte (§7.5) |
+| 6 | Wie heißt die Route zum Beenden einer Session, und was passiert mit dem Worktree? | betrifft die Hänger-Karte (§7.3); `kill` vs. `cleanup` unterscheiden |
+| 7 | Liefert `GET /api/v1/sessions/{id}/pr` Head-SHA und die fehlgeschlagenen Checks mit Namen? | trägt Fix-Karte (§7.3) und Live-Prüfung (§7.5) |
 
 Das Nachrichtenlimit (4096 gegen 16 KiB) ist durch die Brief-Datei aus §3.2
 entschärft und damit **kein** Blocker mehr.
