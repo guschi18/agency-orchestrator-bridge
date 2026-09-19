@@ -1,0 +1,16 @@
+{
+  "name": "ao-agency-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Übergibt freigegebene Agency-Karten an den Agent Orchestrator und meldet den Stand zurück.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "once": "node index.mjs --once",
+    "sync-projects": "node sync-projects.mjs",
+    "test": "node --test test/"
+  }
+}
