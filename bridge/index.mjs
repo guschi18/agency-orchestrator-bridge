@@ -6,7 +6,7 @@ import { aoJobFromAgencyJob, createAgencyClient } from "./lib/agency-client.mjs"
 import { blockedCardHtml, mergeCardHtml } from "./lib/cards.mjs";
 import { buildOrchestratorBrief, workerNameFor } from "./lib/contract.mjs";
 import { mergeProblem } from "./lib/merge.mjs";
-import { analysisAllowed, dispatchProblem, readPipeline, syncProjects } from "./lib/pipeline.mjs";
+import { analysisAllowed, dispatchProblem, readPipeline, requiresGreenCi, syncProjects } from "./lib/pipeline.mjs";
 import { buildRunnerPrompt, runnerCard, runnerPaths } from "./lib/runner.mjs";
 import { decide, progressed } from "./lib/status.mjs";
 import { openStore } from "./lib/store.mjs";
@@ -17,7 +17,7 @@ export function log(event, fields = {}) {
 
 export async function tick({ config, agency, ao, store, pipeline = {}, now = Date.now() }) {
   await dispatchNew({ config, agency, ao, store, pipeline, now });
-  await syncOpen({ config, agency, ao, store, now });
+  await syncOpen({ config, agency, ao, store, pipeline, now });
 }
 
 // ---- Neue Jobs übernehmen ----------------------------------------------------
@@ -54,9 +54,21 @@ async function dispatchNew({ config, agency, ao, store, pipeline, now }) {
       await block({ agency, store, run: store.get(job.jobId), reason: problem, now, final: true });
       continue;
     }
-    if (action === "merge") await handleMerge({ config, agency, ao, store, run: store.get(job.jobId), job, now });
+    if (action === "merge") await handleMerge({ config, agency, ao, store, run: store.get(job.jobId), job, pipeline, now });
     else if (action === "discover") await handleDiscover({ config, agency, ao, store, run: store.get(job.jobId), pipeline, now });
-    else await sendBrief({ ao, store, run: store.get(job.jobId), job, now });
+    else if (action === "implement") await sendBrief({ ao, store, run: store.get(job.jobId), job, now });
+    else if (action === "acknowledge") {
+      // "Gesehen": kein Auftrag, nur das Abhaken. Die Karte ist damit erledigt
+      // und wird nicht erneut gelegt (pushed_cards).
+      await agency.updateJob(job.jobId, "done", "Zur Kenntnis genommen", "completed");
+      store.update(job.jobId, { state: "completed", agency_job_open: 0 });
+      log("acknowledged", { jobId: job.jobId, projectId: job.ao.projectId, pr: job.ao.prNumber ?? null });
+    } else {
+      // Unbekannte Aktion: lieber sichtbar blockieren als still etwas tun,
+      // das niemand gemeint hat.
+      await block({ agency, store, run: store.get(job.jobId), now, final: true,
+        reason: `Die Bridge kennt keine Aktion "${action}" — nur implement, merge, discover und acknowledge` });
+    }
   }
 }
 
@@ -96,7 +108,7 @@ async function sendBrief({ ao, store, run, job, now }) {
 
 // ---- Laufende Aufträge nachführen -------------------------------------------
 
-async function syncOpen({ config, agency, ao, store, now }) {
+async function syncOpen({ config, agency, ao, store, pipeline, now }) {
   for (const run of store.open()) {
     try {
       if (run.action === "merge") continue;
@@ -108,7 +120,7 @@ async function syncOpen({ config, agency, ao, store, now }) {
         } });
         continue;
       }
-      await syncRun({ config, agency, ao, store, run, now });
+      await syncRun({ config, agency, ao, store, run, pipeline, now });
     } catch (err) {
       if (err instanceof AoUnavailable) {
         log("ao.unavailable", { jobId: run.job_id, error: err.message });
@@ -120,7 +132,7 @@ async function syncOpen({ config, agency, ao, store, now }) {
   }
 }
 
-async function syncRun({ config, agency, ao, store, run, now }) {
+async function syncRun({ config, agency, ao, store, run, pipeline, now }) {
   let worker = null;
   if (run.worker_session_id) worker = await ao.session(run.worker_session_id);
   else {
@@ -134,7 +146,8 @@ async function syncRun({ config, agency, ao, store, run, now }) {
   }
   const prs = worker ? await ao.prs(worker.id) : [];
   const reviewRuns = worker ? (await ao.reviews(worker.id))?.runs ?? [] : [];
-  const decision = decide({ run, worker, prs, reviewRuns, now, limits: config.limits });
+  const limits = { ...config.limits, requireGreenCi: requiresGreenCi(pipeline, run.ao_project_id) };
+  const decision = decide({ run, worker, prs, reviewRuns, now, limits });
 
   const fields = { last_synced_at: now, review_cycles: decision.reviewCycles ?? run.review_cycles };
   if (decision.pr?.url) fields.pr_url = decision.pr.url;
@@ -267,14 +280,14 @@ async function handleDiscover({ config, agency, ao, store, run, pipeline, now })
   }
 }
 
-async function handleMerge({ config, agency, ao, store, run, job, now }) {
+async function handleMerge({ config, agency, ao, store, run, job, pipeline, now }) {
   if (!config.allowMerge) {
     return block({ agency, store, run, reason: "Merge über die Bridge ist in diesem Setup abgeschaltet (BRIDGE_ALLOW_MERGE=0)", now, final: true });
   }
   const { workerSessionId, headSha, prNumber } = job.ao;
   const pr = (await ao.prs(workerSessionId)).find((p) => p.number === prNumber);
   const reviewRuns = (await ao.reviews(workerSessionId))?.runs ?? [];
-  const problem = mergeProblem({ pr, reviewRuns, expectedHeadSha: headSha, requireGreenCi: config.requireGreenCi });
+  const problem = mergeProblem({ pr, reviewRuns, expectedHeadSha: headSha, requireGreenCi: requiresGreenCi(pipeline, run.ao_project_id) });
   if (problem) {
     log("merge.refused", { jobId: run.job_id, pr: prNumber, reason: problem });
     return block({ agency, store, run, reason: `Merge abgebrochen: ${problem}`, now, prUrl: pr?.url, final: true });
@@ -298,7 +311,7 @@ async function main() {
   const once = process.argv.includes("--once");
   log("bridge.start", {
     agency: config.agencyUrl, aoRunFile: config.aoRunFile, pipeline: config.pipelineFile,
-    allowMerge: config.allowMerge, requireGreenCi: config.requireGreenCi, once,
+    allowMerge: config.allowMerge, once,
   });
 
   // Abgleich und Jobs haben getrennte Uhren: ein Agency-Ausfall bremst über

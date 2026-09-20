@@ -70,12 +70,16 @@ pwsh -File D:\agency-orchestrator-bridge\scripts\start-runner.ps1 -ProjectId pol
 Agency selbst liegt unverändert in `D:\Tools\Agency\agency` — nur klonen und
 `git pull`, kein Fork. Die Bridge spricht ausschließlich die lokale API.
 
-## Die zwei Freigaben
+## Die Freigaben je Projekt
 
 `pipeline.json` ist die einzige Freigabequelle:
 
 - `analysieren: true` → der Runner darf dort Karten suchen
 - `umsetzen: true` → die Bridge darf Aufträge für dieses Projekt an AO geben
+- `ciGruenVerlangen: true` → eine Karte wird erst fertig und ein Merge erst
+  erlaubt, wenn die CI **grün** ist, statt nur „nicht rot". Nur einschalten,
+  wenn das Projekt eine GitHub-Action hat: ohne Action meldet AO dauerhaft
+  `unknown`, und nichts käme mehr durch
 
 Neue Projekte stehen auf `false`. Verschwindet ein Projekt aus AO, bleibt sein
 Eintrag stehen und bekommt `nichtMehrInAo` — gelöscht wird nie etwas.
@@ -87,7 +91,7 @@ Alles hat brauchbare Vorgaben; diese hier ändern das Verhalten wirklich:
 | Variable | Vorgabe | Wirkung |
 |---|---|---|
 | `BRIDGE_ALLOW_MERGE` | an | `0` schaltet den Merge-Weg der Bridge ganz ab |
-| `BRIDGE_REQUIRE_GREEN_CI` | aus | `1` verlangt einen **grünen** Check statt nur „nicht rot" — erst einschalten, wenn jedes freigeschaltete Projekt eine CI hat |
+| `BRIDGE_FOREIGN_PR_CARDS` | an | `0` schaltet die Hinweiskarten für PRs ohne AO-Auftrag ab |
 | `BRIDGE_SYNC_MS` | 300000 | Takt des Projektabgleichs |
 | `BRIDGE_POLL_MS` | 15000 | Takt für Jobs und laufende Aufträge |
 | `BRIDGE_WORKER_TIMEOUT_MIN` | 15 | ab wann ein Auftrag ohne Worker als blockiert gilt |
@@ -105,8 +109,30 @@ diese drei kennt die Bridge nicht:
 | `discover` | Runner starten | eine AO-Session liest das Projekt und legt Karten vor | `analysieren` |
 | `implement` | Mit AO umsetzen | Orchestrator plant, **ein** Worker setzt um, Reviewer prüft, PR entsteht | `umsetzen` |
 | `merge` | Mergen | Live-Recheck aller Bedingungen, dann Squash-Merge | `umsetzen` |
+| `acknowledge` | Gesehen | hakt eine Hinweiskarte ab, löst nichts aus | — |
 
 `discover` verlangt nur `analysieren`: der Lauf liest, er verändert nichts.
+Eine Aktion, die hier nicht steht, wird sichtbar blockiert statt still ausgeführt.
+
+## PRs, die nicht aus einer Karte stammen
+
+Legst du (oder sonst jemand) einen Pull Request von Hand an, weiß der Stapel
+nichts davon. Deshalb fragt der Abgleich je freigeschaltetem Projekt die offenen
+PRs ab und legt für jeden, der **nicht** aus einem AO-Auftrag stammt, genau
+einmal eine Hinweiskarte: Titel, Branch, Umfang, CI-Stand, Link.
+
+Woran die Bridge „fremd" erkennt: der Branch liegt nicht im `ao/`-Namensraum
+**und** die Bridge kennt den PR nicht aus einem eigenen Lauf.
+
+Diese Karten haben **keinen Merge-Knopf**. Der Merge-Weg verlangt ein AO-Review
+für genau diesen Commit, und das gibt es ohne AO-Auftrag nicht — du entscheidest
+auf GitHub und hakst die Karte mit „Gesehen" ab. Abgehakt heißt endgültig: die
+Karte wird nie erneut gelegt.
+
+Quelle ist die `gh`-CLI als Unterprozess, nicht die GitHub-API: `gh` ist schon
+angemeldet, die Bridge braucht also **kein Token** und speichert keines. Fehlt
+`gh`, wird das geloggt und der Abgleich läuft weiter. Abschalten mit
+`BRIDGE_FOREIGN_PR_CARDS=0`.
 
 **Nebenwirkung von `discover`:** AO legt für die Runner-Session einen Branch
 `ao/<session-id>/root` im Projekt an. Der Worktree liegt in `~/.ao/data/worktrees/`,
@@ -127,5 +153,5 @@ also außerhalb deines Ordners — im Repo bleibt nur der Branch-Eintrag zurück
 
 ```powershell
 cd D:\agency-orchestrator-bridge\bridge
-npm test        # 83 Tests
+npm test        # 105 Tests
 ```

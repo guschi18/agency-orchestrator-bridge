@@ -2,6 +2,7 @@
   "polnisch": {
     "analysieren": true,
     "umsetzen": true,
+    "ciGruenVerlangen": true,
     "prioritaet": 90,
     "maxKarten": 3
   }

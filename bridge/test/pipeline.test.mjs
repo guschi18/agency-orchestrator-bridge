@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  analysisAllowed, dispatchProblem, ensureProjectDoc, mergePipeline, readPipeline, syncProjects,
+  analysisAllowed, dispatchProblem, ensureProjectDoc, mergePipeline, readPipeline, requiresGreenCi, syncProjects,
 } from "../lib/pipeline.mjs";
 
 const NOW = Date.parse("2026-09-20T06:00:00.000Z");
@@ -199,4 +199,24 @@ test("eine unerreichbare Agency laesst den Abgleich trotzdem durchlaufen", async
   const result = await syncProjects({ ao: f.ao, agency: f.agency, config, now: NOW, log: (e) => events.push(e) });
   assert.deepEqual(result.cardsPushed, []);
   assert.ok(events.includes("runner-cards.skipped"));
+});
+
+test("die CI-Pflicht gilt je Projekt, nicht global", () => {
+  // Global gesetzt wuerde ein Projekt ohne GitHub-Action dauerhaft auf
+  // "unknown" stehen und nie eine Karte fertigstellen.
+  const pipeline = { mitCi: { ciGruenVerlangen: true }, ohneCi: { analysieren: true } };
+  assert.equal(requiresGreenCi(pipeline, "mitCi"), true);
+  assert.equal(requiresGreenCi(pipeline, "ohneCi"), false);
+  assert.equal(requiresGreenCi(pipeline, "unbekannt"), false);
+  assert.equal(requiresGreenCi({}, "x"), false);
+});
+
+test("ciGruenVerlangen muss genau true sein", () => {
+  assert.equal(requiresGreenCi({ x: { ciGruenVerlangen: "ja" } }, "x"), false);
+  assert.equal(requiresGreenCi({ x: { ciGruenVerlangen: 1 } }, "x"), false);
+});
+
+test("ein neues Projekt bekommt keine CI-Pflicht aufgezwungen", () => {
+  const { pipeline } = mergePipeline({}, [{ id: "neu" }], ISO);
+  assert.equal(requiresGreenCi(pipeline, "neu"), false);
 });

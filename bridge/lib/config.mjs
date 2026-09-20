@@ -28,9 +28,9 @@ export function loadConfig(env = process.env) {
     runnerHarness: env.BRIDGE_RUNNER_HARNESS ?? "claude-code",
     runnerModel: env.BRIDGE_RUNNER_MODEL ?? "claude-opus-5",
     allowMerge: env.BRIDGE_ALLOW_MERGE !== "0",
-    // Erst scharfstellen, wenn jedes freigeschaltete Projekt eine CI hat (A5):
-    // ohne Action meldet AO dauerhaft "unknown" und kein Merge käme durch.
-    requireGreenCi: env.BRIDGE_REQUIRE_GREEN_CI === "1",
+    // Hinweiskarten für offene PRs ohne AO-Auftrag. Braucht die gh-CLI;
+    // fehlt sie, wird der Abgleich davon nicht aufgehalten.
+    foreignPrCards: env.BRIDGE_FOREIGN_PR_CARDS !== "0",
     pollMs: Number(env.BRIDGE_POLL_MS ?? 15_000),
     syncMs: Number(env.BRIDGE_SYNC_MS ?? 5 * MINUTE),
     limits: {
@@ -38,7 +38,6 @@ export function loadConfig(env = process.env) {
       maxReviewCycles: Number(env.BRIDGE_MAX_REVIEW_CYCLES ?? 3),
       stallMs: Number(env.BRIDGE_STALL_MIN ?? 240) * MINUTE,
       leaseRefreshMs: 30 * MINUTE,
-      requireGreenCi: env.BRIDGE_REQUIRE_GREEN_CI === "1",
     },
   };
 }

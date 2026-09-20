@@ -8,6 +8,7 @@
 // plus eine Agency-Lane (Topic) je Projekt.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { foreignPrCard, foreignPrDedupeKey, isForeign, listOpenPrs, repoSlug } from "./foreign-prs.mjs";
 import { runnerCard, runnerDedupeKey } from "./runner.mjs";
 
 // Neue Projekte stehen absichtlich auf false: ein Tippfehler bei der
@@ -36,6 +37,13 @@ export function dispatchProblem(pipeline, projectId) {
 export function analysisAllowed(pipeline, projectId) {
   const entry = pipeline?.[projectId];
   return entry?.analysieren === true && !entry.nichtMehrInAo;
+}
+
+// A5: Verlangt dieses Projekt einen grünen CI-Check, statt sich mit "nicht rot"
+// zu begnügen? Bewusst je Projekt: global gesetzt würde ein Projekt ohne
+// GitHub-Action dauerhaft auf "unknown" stehen und nie eine Karte fertigstellen.
+export function requiresGreenCi(pipeline, projectId) {
+  return pipeline?.[projectId]?.ciGruenVerlangen === true;
 }
 
 // Reine Funktion, damit der Abgleich ohne AO und ohne Dateisystem testbar ist.
@@ -158,10 +166,50 @@ export async function syncProjects({ ao, agency, config, store = null, now = Dat
   if (topicsFailed.length) log("sync.topics-failed", { failed: topicsFailed.slice(0, 5) });
 
   const cardsPushed = await ensureRunnerCards({ agency, config, projects, store, log });
+  const prCards = await ensureForeignPrCards({ ao, agency, config, projects, store, now, log });
 
-  const result = { count: projects.length, added, vanished, returned, docsCreated, cardsPushed, pipeline, projects };
-  log("sync.done", { count: result.count, added, vanished, returned, docsCreated, cardsPushed });
+  const result = { count: projects.length, added, vanished, returned, docsCreated, cardsPushed, prCards, pipeline, projects };
+  log("sync.done", { count: result.count, added, vanished, returned, docsCreated, cardsPushed, prCards });
   return result;
+}
+
+// Offene PRs, die nicht aus einem AO-Auftrag stammen, bekommen eine
+// Hinweiskarte — genau einmal. Sonst laufen sie am Stapel vorbei.
+async function ensureForeignPrCards({ ao, agency, config, projects, store, now, log }) {
+  if (!config.foreignPrCards || !store) return [];
+  const pushed = [];
+  for (const p of projects.filter((p) => p.analysieren || p.bridgeDispatch)) {
+    let slug = null;
+    try {
+      slug = repoSlug((await ao.project(p.id))?.repo);
+    } catch (err) {
+      log("foreign-prs.project-failed", { projectId: p.id, error: err.message });
+      continue;
+    }
+    if (!slug) continue; // kein GitHub-Remote: nichts zu holen
+    let prs;
+    try {
+      prs = await listOpenPrs(slug);
+    } catch (err) {
+      // gh fehlt oder ist nicht angemeldet: kein Grund, den Abgleich zu stoppen.
+      log("foreign-prs.skipped", { projectId: p.id, error: err.message.slice(0, 200) });
+      continue;
+    }
+    const known = new Set(store.knownPrUrls?.() ?? []);
+    for (const pr of prs) {
+      if (!isForeign(pr, known)) continue;
+      const key = foreignPrDedupeKey(p.id, pr.number);
+      if (store.wasPushed(key)) continue;
+      try {
+        await agency.pushCard(foreignPrCard({ projectId: p.id, pr }));
+        store.markPushed(key, now);
+        pushed.push(key);
+      } catch (err) {
+        log("foreign-pr-card.failed", { key, error: err.message });
+      }
+    }
+  }
+  return pushed;
 }
 
 // Der Startknopf je freigeschaltetem Projekt. Er gehört dauerhaft in den
