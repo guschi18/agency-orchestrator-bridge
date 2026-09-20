@@ -112,51 +112,18 @@ if ($Port -ne 3100) {
   Write-Host "  !   Agency laeuft auf Port $Port statt 3100. Laeuft die Bridge gegen denselben Port?" -ForegroundColor Yellow
 }
 
-$auftrag = @"
-Du bist der Agency-Runner fuer einen einmaligen Discovery-Lauf ueber **ein** Projekt: ``$ProjectId``.
-
-1. Lies diese Dateien vollstaendig und halte dich an sie:
-   - $skillDir\SKILL.md
-   - $skillDir\APPROVALS.md
-   - $skillDir\LAYOUT.md
-   - $MeFile  (gilt immer; hat Vorrang bei Sprache und Ausfuehrung)
-   - $DocFile  (Ziele, Quellen und Grenzen genau dieses Projekts)
-   - $ProjectsFile  (Projekt-ID und Pfad - nie raten)
-   - $AgencyPath\scripts\push-card.mjs  (so werden Karten gepusht)
-
-2. Untersuche **nur** ``$($project.path)`` und **nur lesend**: Code, Tests, die in der Projektdatei
-   genannten Quellen, git log. Nichts aendern, nichts committen, keine ``.env`` lesen, keine Secrets
-   in Karten schreiben.
-
-3. Finde die wertvollsten Verbesserungen nach den Massstaeben der Projektdatei und pushe
-   **hoechstens $MaxKarten Karten** an die laufende Agency unter $AgencyUrl
-   (POST /api/ideas mit Header ``x-radar-local-agent: 1``, z. B.
-   ``node "$AgencyPath\scripts\push-card.mjs" <meta.json>`` mit Arbeitsdateien unter
-   $AgencyPath\agent-work\).
-   Lieber weniger Karten als schwache - eine schwache Karte kostet dich eine echte Entscheidung.
-
-   Jede Karte:
-   - ``project`` und ``category`` = "$ProjectId"
-   - stabiler ``dedupeKey`` "${ProjectId}:<thema>"
-   - vollstaendiges ``rise``, ``effortSeconds`` + ``effortReason``
-   - ``agentContext.ao`` = { projectId: "$ProjectId", action: "implement", route: "orchestrator",
-     task: { objective, evidence[], acceptanceCriteria[], constraints[] } }, zusammen unter 2500 Zeichen
-   - eine Do-Aktion "Mit AO umsetzen"
-   - Karten-HTML: kein ``<a>``, ``<script>``, ``<svg>``, keine Event-Handler, keine externen Bilder.
-     Links nur als ``<button data-radar-action="open" data-radar-url="...">``.
-
-4. Pruefe nach dem Push mit GET $AgencyUrl/api/state (Header ``x-radar-local-agent: 1``),
-   dass die Karten angekommen sind.
-
-5. Antworte am Ende mit: Liste der Karten (id, dedupeKey, Titel, RISE) und was du nicht pruefen konntest.
-
-Du setzt nichts selbst um. Die Umsetzung startet erst, wenn der Nutzer eine Karte freigibt;
-dann uebergibt die Bridge sie an den AO-Orchestrator.
-"@
-
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 $outFile = Join-Path $RuntimeDir "runner-$ProjectId.md"
-$auftrag | Set-Content -Path $outFile -Encoding utf8
+
+# Node schreibt die Datei selbst. Ueber die Pipe liest PowerShell Nodes
+# UTF-8-Ausgabe als CP850 und macht aus jedem "ue" ein "├╝".
+$env:AGENCY_URL = $AgencyUrl
+$env:AGENCY_PATH = $AgencyPath
+& node (Join-Path $RepoRoot 'bridge\runner-prompt.mjs') $ProjectId $MaxKarten '--out' $outFile | Out-Null
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $outFile)) {
+  Fail "Auftrag konnte nicht gebaut werden (bridge\runner-prompt.mjs)."
+}
+$auftrag = (Get-Content -Raw -Encoding utf8 $outFile).TrimEnd()
 
 Write-Host "Runner-Auftrag fuer '$ProjectId'" -ForegroundColor Cyan
 Write-Host "  Pfad:    $($project.path)"

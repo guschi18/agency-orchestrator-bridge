@@ -55,6 +55,9 @@ export function createAoClient(runFile, fetchImpl = fetch) {
     // die einzige Quelle für eine Diff-Übersicht, die AO selbst kennt.
     workspaceFiles: async (id) => call("GET", `/sessions/${encodeURIComponent(id)}/workspace/files`),
     send: async (id, message) => call("POST", `/sessions/${encodeURIComponent(id)}/send`, { message }),
+    // Harness und Modell müssen mit: sonst nimmt AO das Worker-Modell des
+    // Projekts (OpenCode/GLM) und der Start eines Claude-Laufs schlägt fehl.
+    spawn: async (body) => (await call("POST", "/sessions", body)).session,
     // AO verlangt prUrl und expectedHeadSha (MergePRRequest): das ist AOs
     // eigener Schutz gegen einen Merge auf einen inzwischen bewegten Head.
     merge: async (prNumber, { prUrl, expectedHeadSha }) =>

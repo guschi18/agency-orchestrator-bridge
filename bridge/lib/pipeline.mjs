@@ -8,6 +8,7 @@
 // plus eine Agency-Lane (Topic) je Projekt.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { runnerCard, runnerDedupeKey } from "./runner.mjs";
 
 // Neue Projekte stehen absichtlich auf false: ein Tippfehler bei der
 // Registrierung darf keine echte Arbeit auslösen.
@@ -156,7 +157,38 @@ export async function syncProjects({ ao, agency, config, now = Date.now(), log =
   }
   if (topicsFailed.length) log("sync.topics-failed", { failed: topicsFailed.slice(0, 5) });
 
-  const result = { count: projects.length, added, vanished, returned, docsCreated, pipeline, projects };
-  log("sync.done", { count: result.count, added, vanished, returned, docsCreated });
+  const cardsPushed = await ensureRunnerCards({ agency, config, projects, log });
+
+  const result = { count: projects.length, added, vanished, returned, docsCreated, cardsPushed, pipeline, projects };
+  log("sync.done", { count: result.count, added, vanished, returned, docsCreated, cardsPushed });
   return result;
+}
+
+// Der Startknopf je freigeschaltetem Projekt. Nur anlegen, wenn keine
+// sichtbare Karte mit diesem dedupeKey existiert: ein erneuter Push würde die
+// Karte auf "New" zurücksetzen und die Version hochzählen.
+// Aus-Schalter ist "analysieren": false — dann verschwindet auch der Knopf.
+async function ensureRunnerCards({ agency, config, projects, log }) {
+  const wanted = projects.filter((p) => p.analysieren && !p.folderMissing);
+  if (!wanted.length) return [];
+  let existing;
+  try {
+    existing = await agency.visibleDedupeKeys();
+  } catch (err) {
+    log("runner-cards.skipped", { error: err.message });
+    return [];
+  }
+  const pushed = [];
+  for (const p of wanted) {
+    if (existing.has(runnerDedupeKey(p.id))) continue;
+    try {
+      await agency.pushCard(runnerCard({
+        projectId: p.id, projectPath: p.path, maxKarten: p.maxKarten, docFile: p.projektDatei,
+      }));
+      pushed.push(p.id);
+    } catch (err) {
+      log("runner-card.failed", { projectId: p.id, error: err.message });
+    }
+  }
+  return pushed;
 }

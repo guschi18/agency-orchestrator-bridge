@@ -6,7 +6,8 @@ import { aoJobFromAgencyJob, createAgencyClient } from "./lib/agency-client.mjs"
 import { blockedCardHtml, mergeCardHtml } from "./lib/cards.mjs";
 import { buildOrchestratorBrief, workerNameFor } from "./lib/contract.mjs";
 import { mergeProblem } from "./lib/merge.mjs";
-import { dispatchProblem, readPipeline, syncProjects } from "./lib/pipeline.mjs";
+import { analysisAllowed, dispatchProblem, readPipeline, syncProjects } from "./lib/pipeline.mjs";
+import { buildRunnerPrompt, runnerCard, runnerPaths } from "./lib/runner.mjs";
 import { decide, progressed } from "./lib/status.mjs";
 import { openStore } from "./lib/store.mjs";
 
@@ -47,19 +48,25 @@ async function dispatchNew({ config, agency, ao, store, pipeline, now }) {
     store.update(job.jobId, { last_lease_at: now });
     log("job.claimed", { jobId: job.jobId, action, projectId: job.ao.projectId });
 
-    const problem = await projectProblem(ao, pipeline, job.ao.projectId);
+    const problem = await projectProblem(ao, pipeline, job.ao.projectId, action);
     if (problem) {
       // Nie an AO übergeben: abschließen, nicht weiter beobachten.
       await block({ agency, store, run: store.get(job.jobId), reason: problem, now, final: true });
       continue;
     }
     if (action === "merge") await handleMerge({ config, agency, ao, store, run: store.get(job.jobId), job, now });
+    else if (action === "discover") await handleDiscover({ config, agency, ao, store, run: store.get(job.jobId), pipeline, now });
     else await sendBrief({ ao, store, run: store.get(job.jobId), job, now });
   }
 }
 
-async function projectProblem(ao, pipeline, projectId) {
-  const notAllowed = dispatchProblem(pipeline, projectId);
+// Die beiden Freigaben gelten für verschiedene Aktionen: ein Discovery-Lauf
+// liest nur (analysieren), ein Auftrag verändert das Repo (umsetzen).
+async function projectProblem(ao, pipeline, projectId, action) {
+  const notAllowed = action === "discover"
+    ? (analysisAllowed(pipeline, projectId) ? null
+      : `Projekt "${projectId}" ist in pipeline.json nicht zur Analyse freigegeben (analysieren: false)`)
+    : dispatchProblem(pipeline, projectId);
   if (notAllowed) return notAllowed;
   try {
     const project = await ao.project(projectId);
@@ -213,6 +220,50 @@ async function block({ agency, store, run, reason, now, prUrl, final = false }) 
   } catch (err) {
     // 409 = Karte hat sich geändert; der Job-Abschluss mit Grund ist trotzdem sichtbar.
     log("blocked-card.failed", { jobId: run.job_id, error: err.message });
+  }
+}
+
+// Ein Klick auf "Runner starten": genau eine Session, die das Projekt liest
+// und Karten pusht. Die Karten kommen vom Runner selbst, nicht von hier — die
+// Bridge meldet nur, dass der Lauf angefangen hat.
+async function handleDiscover({ config, agency, ao, store, run, pipeline, now }) {
+  const projectId = run.ao_project_id;
+  const { worker: existing } = await findWorker(ao, projectId, run.worker_name);
+  if (existing) {
+    // Doppelklick oder erneut ausgegebener Job: nicht noch einen Lauf bezahlen.
+    await agency.updateJob(run.job_id, "done", `Runner läuft bereits (Session ${existing.id})`, "completed");
+    store.update(run.job_id, { state: "completed", agency_job_open: 0, worker_session_id: existing.id });
+    log("discover.skipped", { jobId: run.job_id, reason: "Session existiert bereits", session: existing.id });
+    return;
+  }
+
+  const project = await ao.project(projectId);
+  const entry = pipeline[projectId] ?? {};
+  const prompt = buildRunnerPrompt({
+    projectId,
+    projectPath: project.path,
+    maxKarten: entry.maxKarten ?? 3,
+    agencyUrl: config.agencyUrl,
+    paths: runnerPaths(config, projectId),
+  });
+  const session = await ao.spawn({
+    projectId, kind: "worker", displayName: run.worker_name,
+    harness: config.runnerHarness, model: config.runnerModel, prompt,
+  });
+  await agency.updateJob(run.job_id, "done", `Runner gestartet (Session ${session.id}), Karten folgen im Feed`, "completed");
+  store.update(run.job_id, { state: "completed", agency_job_open: 0, worker_session_id: session.id, last_summary: "Runner gestartet" });
+  log("discover.started", { jobId: run.job_id, projectId, session: session.id, chars: prompt.length });
+
+  // Den Knopf gleich wieder hinlegen, mit dem Stand dieses Laufs.
+  try {
+    await agency.pushCard(runnerCard({
+      projectId, projectPath: project.path, maxKarten: entry.maxKarten ?? 3,
+      docFile: runnerPaths(config, projectId).docFile,
+      lastRunAt: new Date(now).toISOString().slice(0, 16).replace("T", " "),
+      lastRunNote: `Session ${session.id}`,
+    }));
+  } catch (err) {
+    log("runner-card.failed", { projectId, error: err.message });
   }
 }
 

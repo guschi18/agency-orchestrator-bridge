@@ -22,6 +22,11 @@ export function loadConfig(env = process.env) {
     // Die einzige Freigabequelle. Früher: BRIDGE_ALLOWED_PROJECTS.
     pipelineFile: env.BRIDGE_PIPELINE_FILE ?? join(profilDir, "pipeline.json"),
     projectDocsDir: env.BRIDGE_PROJECT_DOCS_DIR ?? join(profilDir, "projekte"),
+    // Agency-Klon: der Runner-Auftrag verweist auf dessen Skill und push-card.mjs.
+    agencyPath: env.AGENCY_PATH ?? "D:\\Tools\\Agency\\agency",
+    // Der Runner denkt, er schreibt nicht — dafür das stärkere Modell.
+    runnerHarness: env.BRIDGE_RUNNER_HARNESS ?? "claude-code",
+    runnerModel: env.BRIDGE_RUNNER_MODEL ?? "claude-opus-5",
     allowMerge: env.BRIDGE_ALLOW_MERGE !== "0",
     // Erst scharfstellen, wenn jedes freigeschaltete Projekt eine CI hat (A5):
     // ohne Action meldet AO dauerhaft "unknown" und kein Merge käme durch.

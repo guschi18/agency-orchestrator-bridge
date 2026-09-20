@@ -15,18 +15,32 @@ in [`Testlauf-Polnisch-2026-09-19.md`](Testlauf-Polnisch-2026-09-19.md).
 # morgens: AO-Desktop-App starten (von Hand), dann
 pwsh -File D:\agency-orchestrator-bridge\scripts\start-pipeline.ps1
 
-# bei Bedarf: einen Discovery-Lauf über ein Projekt vorbereiten
-pwsh -File D:\agency-orchestrator-bridge\scripts\start-runner.ps1 -ProjectId polnisch
-
 # abends
 pwsh -File D:\agency-orchestrator-bridge\scripts\start-pipeline.ps1 -Stop
 ```
 
 `-Status` zeigt, was läuft und welche Projekte freigeschaltet sind.
 
-Der Runner wird bewusst von Hand gestartet: ein Lauf kostete im Test 2,71 $.
-`start-runner.ps1` baut den Auftrag und legt ihn in die Zwischenablage — du
-fügst ihn in eine AO-Session mit Claude/Opus ein.
+## Einen Discovery-Lauf starten
+
+Für jedes Projekt mit `analysieren: true` liegt im Feed eine Karte
+**„Neue Vorschläge für &lt;projekt&gt; suchen"**. Ein Klick auf „Runner starten"
+genügt: Die Bridge startet genau eine AO-Session (Claude/Opus), die das Projekt
+nur lesend untersucht und ihre Karten in dieselbe Lane pusht.
+
+Der Lauf bleibt damit deine Entscheidung — ein Klick, kein Zeitplan. Ein Lauf
+kostete im Test 2,71 $; die Karte nennt den Betrag. Ein zweiter Klick auf
+dieselbe Karte startet keinen zweiten Lauf.
+
+Den Knopf abschalten: `analysieren: false` in `pipeline.json`. Dann verschwindet
+die Karte beim nächsten Abgleich.
+
+Ohne Browser geht es weiter per Skript — derselbe Auftragstext, nur zum
+Selbsteinfügen in eine AO-Session:
+
+```powershell
+pwsh -File D:\agency-orchestrator-bridge\scripts\start-runner.ps1 -ProjectId polnisch
+```
 
 ## Neues Projekt aufnehmen
 
@@ -78,6 +92,25 @@ Alles hat brauchbare Vorgaben; diese hier ändern das Verhalten wirklich:
 | `BRIDGE_POLL_MS` | 15000 | Takt für Jobs und laufende Aufträge |
 | `BRIDGE_WORKER_TIMEOUT_MIN` | 15 | ab wann ein Auftrag ohne Worker als blockiert gilt |
 | `BRIDGE_MAX_REVIEW_CYCLES` | 3 | ab wie vielen Änderungsrunden abgebrochen wird |
+| `BRIDGE_RUNNER_MODEL` | `claude-opus-5` | Modell des Discovery-Runners |
+| `AGENCY_PATH` | `D:\Tools\Agency\agency` | Agency-Klon, auf dessen Skill der Runner-Auftrag zeigt |
+
+## Die drei Karten-Aktionen
+
+Jede Karte trägt in `agentContext.ao.action`, was ein Klick auslöst. Mehr als
+diese drei kennt die Bridge nicht:
+
+| `action` | Knopf | Was passiert | Freigabe |
+|---|---|---|---|
+| `discover` | Runner starten | eine AO-Session liest das Projekt und legt Karten vor | `analysieren` |
+| `implement` | Mit AO umsetzen | Orchestrator plant, **ein** Worker setzt um, Reviewer prüft, PR entsteht | `umsetzen` |
+| `merge` | Mergen | Live-Recheck aller Bedingungen, dann Squash-Merge | `umsetzen` |
+
+`discover` verlangt nur `analysieren`: der Lauf liest, er verändert nichts.
+
+**Nebenwirkung von `discover`:** AO legt für die Runner-Session einen Branch
+`ao/<session-id>/root` im Projekt an. Der Worktree liegt in `~/.ao/data/worktrees/`,
+also außerhalb deines Ordners — im Repo bleibt nur der Branch-Eintrag zurück.
 
 ## Was die Bridge nie tut
 
@@ -94,5 +127,5 @@ Alles hat brauchbare Vorgaben; diese hier ändern das Verhalten wirklich:
 
 ```powershell
 cd D:\agency-orchestrator-bridge\bridge
-npm test        # 68 Tests
+npm test        # 83 Tests
 ```
