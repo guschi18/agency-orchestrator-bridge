@@ -118,7 +118,7 @@ async function writeJson(path, value) {
 // Ein Durchlauf des Abgleichs. Läuft beim Start und danach alle 5 Minuten in
 // der Bridge-Schleife. AO-Ausfälle werfen (die Schleife bremst dann ab),
 // Agency-Ausfälle blockieren den Rest nicht.
-export async function syncProjects({ ao, agency, config, now = Date.now(), log = () => {} }) {
+export async function syncProjects({ ao, agency, config, store = null, now = Date.now(), log = () => {} }) {
   const aoProjects = await ao.projects();
   const current = await readPipeline(config.pipelineFile);
   const { pipeline, added, vanished, returned } = mergePipeline(current, aoProjects, new Date(now).toISOString());
@@ -157,23 +157,30 @@ export async function syncProjects({ ao, agency, config, now = Date.now(), log =
   }
   if (topicsFailed.length) log("sync.topics-failed", { failed: topicsFailed.slice(0, 5) });
 
-  const cardsPushed = await ensureRunnerCards({ agency, config, projects, log });
+  const cardsPushed = await ensureRunnerCards({ agency, config, projects, store, log });
 
   const result = { count: projects.length, added, vanished, returned, docsCreated, cardsPushed, pipeline, projects };
   log("sync.done", { count: result.count, added, vanished, returned, docsCreated, cardsPushed });
   return result;
 }
 
-// Der Startknopf je freigeschaltetem Projekt. Nur anlegen, wenn keine
-// sichtbare Karte mit diesem dedupeKey existiert: ein erneuter Push würde die
-// Karte auf "New" zurücksetzen und die Version hochzählen.
+// Der Startknopf je freigeschaltetem Projekt. Er gehört dauerhaft in den
+// aktiven Stapel: einen neuen Lauf muss man immer anstoßen können.
+//
+// Deshalb zählt nur "new" und "working". Liegt die Karte in "done" (Lauf
+// vorbei), wurde sie übersprungen oder ist sie sonstwie aus dem Stapel
+// gefallen, legt der nächste Abgleich sie zurück. Das heilt sich selbst,
+// statt sich auf die Reihenfolge rund um den Job-Abschluss zu verlassen.
+//
 // Aus-Schalter ist "analysieren": false — dann verschwindet auch der Knopf.
-async function ensureRunnerCards({ agency, config, projects, log }) {
+const ACTIVE_VIEWS = ["new", "working"];
+
+async function ensureRunnerCards({ agency, config, projects, store, log }) {
   const wanted = projects.filter((p) => p.analysieren && !p.folderMissing);
   if (!wanted.length) return [];
   let existing;
   try {
-    existing = await agency.visibleDedupeKeys();
+    existing = await agency.dedupeKeysIn(ACTIVE_VIEWS);
   } catch (err) {
     log("runner-cards.skipped", { error: err.message });
     return [];
@@ -181,9 +188,12 @@ async function ensureRunnerCards({ agency, config, projects, log }) {
   const pushed = [];
   for (const p of wanted) {
     if (existing.has(runnerDedupeKey(p.id))) continue;
+    const last = store?.lastDiscover?.(p.id) ?? null;
     try {
       await agency.pushCard(runnerCard({
         projectId: p.id, projectPath: p.path, maxKarten: p.maxKarten, docFile: p.projektDatei,
+        lastRunAt: last ? isoMinute(last.created_at) : null,
+        lastRunNote: last?.worker_session_id ? `Session ${last.worker_session_id}` : null,
       }));
       pushed.push(p.id);
     } catch (err) {
@@ -191,4 +201,8 @@ async function ensureRunnerCards({ agency, config, projects, log }) {
     }
   }
   return pushed;
+}
+
+function isoMinute(ms) {
+  return new Date(Number(ms)).toISOString().slice(0, 16).replace("T", " ");
 }

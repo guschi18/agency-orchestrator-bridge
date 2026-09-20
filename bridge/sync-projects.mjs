@@ -5,12 +5,14 @@ import { loadConfig } from "./lib/config.mjs";
 import { createAoClient } from "./lib/ao-client.mjs";
 import { createAgencyClient } from "./lib/agency-client.mjs";
 import { syncProjects } from "./lib/pipeline.mjs";
+import { openStore } from "./lib/store.mjs";
 
 const config = loadConfig();
 const result = await syncProjects({
   ao: createAoClient(config.aoRunFile),
   agency: createAgencyClient(config.agencyUrl),
   config,
+  store: openStore(config.dbPath),
   // Lanes scheitern, solange Agency nicht läuft — das soll man hier sehen.
   log: (event, fields) => { if (event === "sync.topics-failed") console.warn(`Agency-Lanes nicht gesetzt: ${fields.failed.join("; ")}`); },
 });

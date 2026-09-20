@@ -28,11 +28,10 @@ export function createAgencyClient(baseUrl, fetchImpl = fetch) {
       return call("POST", "/api/ideas", card);
     },
     upsertTopic: (label, hint) => call("POST", "/api/topics", { label, hint }),
-    // /api/state liefert je Aufruf nur eine Statusspalte. Für "gibt es diese
-    // Karte schon?" müssen alle sichtbaren Spalten abgefragt werden.
-    visibleDedupeKeys: async () => {
+    // /api/state liefert je Aufruf nur eine Statusspalte.
+    dedupeKeysIn: async (views) => {
       const keys = new Set();
-      for (const view of ["new", "working", "done"]) {
+      for (const view of views) {
         const state = await call("GET", `/api/state?view=${view}&light=1`);
         for (const idea of state?.ideas ?? []) if (idea.dedupeKey) keys.add(idea.dedupeKey);
       }

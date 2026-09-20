@@ -311,7 +311,7 @@ async function main() {
     if (now - lastSync >= config.syncMs) {
       lastSync = now;
       try {
-        await syncProjects({ ao, agency, config, now, log });
+        await syncProjects({ ao, agency, config, store, now, log });
       } catch (err) {
         log(err instanceof AoUnavailable ? "ao.unavailable" : "sync.error", { error: err.message });
       }

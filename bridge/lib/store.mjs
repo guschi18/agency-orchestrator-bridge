@@ -33,8 +33,12 @@ export function openStore(path) {
   `);
 
   const get = db.prepare("SELECT * FROM runs WHERE job_id = ?");
+  const lastDiscover = db.prepare(
+    "SELECT * FROM runs WHERE action = 'discover' AND ao_project_id = ? ORDER BY job_id DESC LIMIT 1");
   return {
     get: (jobId) => get.get(jobId) ?? null,
+    // Für die Runner-Karte: wann lief zuletzt ein Discovery-Lauf?
+    lastDiscover: (projectId) => lastDiscover.get(projectId) ?? null,
     open: () => db.prepare(`SELECT * FROM runs WHERE state IN (${OPEN_STATES.map(() => "?").join(",")}) ORDER BY job_id`).all(...OPEN_STATES),
     // INSERT OR IGNORE: ein zweiter Durchlauf für denselben Job legt nichts neu an.
     insert: (run) => db.prepare(`

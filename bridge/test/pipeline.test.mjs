@@ -22,12 +22,18 @@ async function tempConfig() {
   };
 }
 
-function fakes(projects) {
+function fakes(projects, { activeKeys = [] } = {}) {
   const topics = [];
+  const cards = [];
   return {
     ao: { projects: async () => projects },
-    agency: { upsertTopic: async (label, hint) => { topics.push([label, hint]); } },
+    agency: {
+      upsertTopic: async (label, hint) => { topics.push([label, hint]); },
+      dedupeKeysIn: async () => new Set(activeKeys),
+      pushCard: async (c) => { cards.push(c); },
+    },
     topics,
+    cards,
   };
 }
 
@@ -145,4 +151,52 @@ test("eine unerreichbare Agency bricht den Abgleich nicht ab", async () => {
   assert.equal(result.count, 1);
   assert.ok(JSON.parse(await readFile(config.projectsFile, "utf8")).projects.length === 1);
   assert.ok(events.some(([e]) => e === "sync.topics-failed"));
+});
+
+// ---- Der Startknopf bleibt im Stapel -----------------------------------------
+
+async function syncWith({ activeKeys = [], pipelineJson = { polnisch: { analysieren: true, umsetzen: true } }, store = null } = {}) {
+  const { config } = await tempConfig();
+  await writeFile(config.pipelineFile, JSON.stringify(pipelineJson));
+  const f = fakes([{ id: "polnisch", name: "polnisch", path: "D:\Polnisch", kind: "single_repo" }], { activeKeys });
+  const result = await syncProjects({ ao: f.ao, agency: f.agency, config, store, now: NOW });
+  return { ...f, result, config };
+}
+
+test("fehlt der Knopf im Stapel, legt der Abgleich ihn zurück", async () => {
+  const { cards, result } = await syncWith({ activeKeys: [] });
+  assert.deepEqual(result.cardsPushed, ["polnisch"]);
+  assert.equal(cards.at(-1).dedupeKey, "polnisch:runner");
+});
+
+test("liegt der Knopf schon im Stapel, wird er nicht angefasst", async () => {
+  // Ein erneuter Push würde die Karte auf "New" zurückwerfen und die Version
+  // hochzählen — genau das, was §9 als kosmetisches Update verbietet.
+  const { cards, result } = await syncWith({ activeKeys: ["polnisch:runner"] });
+  assert.deepEqual(result.cardsPushed, []);
+  assert.deepEqual(cards, []);
+});
+
+test("nach einem gelaufenen Lauf kommt der Knopf mit dessen Stand zurück", async () => {
+  const store = { lastDiscover: () => ({ created_at: Date.parse("2026-09-20T09:27:00Z"), worker_session_id: "polnisch-1" }) };
+  const { cards } = await syncWith({ activeKeys: [], store });
+  assert.match(cards.at(-1).cardHtml, /2026-09-20 09:27/);
+  assert.match(cards.at(-1).cardHtml, /polnisch-1/);
+});
+
+test("ohne Freigabe zur Analyse gibt es keinen Knopf", async () => {
+  const { cards, result } = await syncWith({ pipelineJson: { polnisch: { analysieren: false, umsetzen: true } } });
+  assert.deepEqual(result.cardsPushed, []);
+  assert.deepEqual(cards, []);
+});
+
+test("eine unerreichbare Agency laesst den Abgleich trotzdem durchlaufen", async () => {
+  const { config } = await tempConfig();
+  await writeFile(config.pipelineFile, JSON.stringify({ polnisch: { analysieren: true } }));
+  const f = fakes([{ id: "polnisch", path: "D:\Polnisch" }]);
+  f.agency.dedupeKeysIn = async () => { throw new Error("ECONNREFUSED"); };
+  const events = [];
+  const result = await syncProjects({ ao: f.ao, agency: f.agency, config, now: NOW, log: (e) => events.push(e) });
+  assert.deepEqual(result.cardsPushed, []);
+  assert.ok(events.includes("runner-cards.skipped"));
 });
