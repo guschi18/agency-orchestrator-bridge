@@ -120,9 +120,10 @@ export function runnerCard({ projectId, projectPath, maxKarten = 3, docFile, las
     headline: `Neue Vorschläge für ${projectId} suchen`.slice(0, 200),
     dedupeKey: runnerDedupeKey(projectId),
     cardHtml: runnerCardHtml({ projectId, projectPath, maxKarten, docFile, lastRunAt, lastRunNote }),
-    // Bewusst unter den Werten eines echten Befunds: der Knopf soll auffindbar
-    // sein, aber nie über der Arbeit stehen, die er gefunden hat.
-    rise: { reach: 10, impact: 10, strategicFit: 15, ease: 25 },
+    // Agency sortiert den Stapel nach RISE. Der Knopf ist kein Befund, sondern
+    // eine Möglichkeit — er gehört ans Ende: erst die angefangene Arbeit zu
+    // Ende entscheiden, dann neue suchen. Deshalb bewusst der Bodenwert.
+    rise: { reach: 1, impact: 1, strategicFit: 1, ease: 5 },
     effortSeconds: 30,
     effortReason: "Entscheiden, ob sich ein Lauf über dieses Projekt jetzt lohnt",
     agentName: "ao-agency-bridge",

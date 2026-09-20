@@ -83,10 +83,13 @@ test("die Karte nennt die Kosten und den Maszstab", () => {
   assert.match(card.cardHtml, /noch nie/);
 });
 
-test("die Karte bleibt unter einem echten Befund", () => {
+test("die Karte steht am Ende des Stapels, nicht vor der angefangenen Arbeit", () => {
+  // Agency sortiert nach RISE. Lag der Knopf bei 60, schob er sich vor eine
+  // fertige Merge-Karte — man sah "neue Vorschlaege suchen", waehrend noch
+  // geprueftes, ungemergtes Material offen war.
   const { rise } = runnerCard({ projectId: "polnisch", projectPath: "D:\\P", docFile: "x.md" });
   const score = rise.reach + rise.impact + rise.strategicFit + rise.ease;
-  assert.ok(score < 70, `Score ${score} wuerde echte Karten verdraengen`);
+  assert.ok(score <= 10, `Score ${score} wuerde sich vor echte Karten schieben`);
 });
 
 // ---- Der Weg durch die Bridge ------------------------------------------------
