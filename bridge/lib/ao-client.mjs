@@ -55,7 +55,10 @@ export function createAoClient(runFile, fetchImpl = fetch) {
     // die einzige Quelle für eine Diff-Übersicht, die AO selbst kennt.
     workspaceFiles: async (id) => call("GET", `/sessions/${encodeURIComponent(id)}/workspace/files`),
     send: async (id, message) => call("POST", `/sessions/${encodeURIComponent(id)}/send`, { message }),
-    merge: async (prId) => call("POST", `/prs/${encodeURIComponent(prId)}/merge`, {}),
+    // AO verlangt prUrl und expectedHeadSha (MergePRRequest): das ist AOs
+    // eigener Schutz gegen einen Merge auf einen inzwischen bewegten Head.
+    merge: async (prNumber, { prUrl, expectedHeadSha }) =>
+      call("POST", `/prs/${encodeURIComponent(prNumber)}/merge`, { prUrl, expectedHeadSha }),
   };
 }
 

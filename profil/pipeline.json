@@ -1,0 +1,8 @@
+{
+  "polnisch": {
+    "analysieren": true,
+    "umsetzen": true,
+    "prioritaet": 90,
+    "maxKarten": 3
+  }
+}

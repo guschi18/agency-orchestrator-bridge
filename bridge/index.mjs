@@ -1,9 +1,12 @@
+import { mkdir } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadConfig } from "./lib/config.mjs";
 import { AoUnavailable, createAoClient, ensureOrchestrator, findWorker } from "./lib/ao-client.mjs";
 import { aoJobFromAgencyJob, createAgencyClient } from "./lib/agency-client.mjs";
 import { blockedCardHtml, mergeCardHtml } from "./lib/cards.mjs";
 import { buildOrchestratorBrief, workerNameFor } from "./lib/contract.mjs";
+import { mergeProblem } from "./lib/merge.mjs";
+import { dispatchProblem, readPipeline, syncProjects } from "./lib/pipeline.mjs";
 import { decide, progressed } from "./lib/status.mjs";
 import { openStore } from "./lib/store.mjs";
 
@@ -11,14 +14,14 @@ export function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
 }
 
-export async function tick({ config, agency, ao, store, now = Date.now() }) {
-  await dispatchNew({ config, agency, ao, store, now });
+export async function tick({ config, agency, ao, store, pipeline = {}, now = Date.now() }) {
+  await dispatchNew({ config, agency, ao, store, pipeline, now });
   await syncOpen({ config, agency, ao, store, now });
 }
 
 // ---- Neue Jobs übernehmen ----------------------------------------------------
 
-async function dispatchNew({ config, agency, ao, store, now }) {
+async function dispatchNew({ config, agency, ao, store, pipeline, now }) {
   for (const raw of await agency.jobs()) {
     const job = aoJobFromAgencyJob(raw);
     if (!job) continue; // kein AO-Job: bleibt beim Agency-Runner
@@ -44,7 +47,7 @@ async function dispatchNew({ config, agency, ao, store, now }) {
     store.update(job.jobId, { last_lease_at: now });
     log("job.claimed", { jobId: job.jobId, action, projectId: job.ao.projectId });
 
-    const problem = await projectProblem(config, ao, job.ao.projectId);
+    const problem = await projectProblem(ao, pipeline, job.ao.projectId);
     if (problem) {
       // Nie an AO übergeben: abschließen, nicht weiter beobachten.
       await block({ agency, store, run: store.get(job.jobId), reason: problem, now, final: true });
@@ -55,8 +58,9 @@ async function dispatchNew({ config, agency, ao, store, now }) {
   }
 }
 
-async function projectProblem(config, ao, projectId) {
-  if (!config.allowedProjects.includes(projectId)) return `Projekt "${projectId}" ist für die Bridge nicht freigegeben`;
+async function projectProblem(ao, pipeline, projectId) {
+  const notAllowed = dispatchProblem(pipeline, projectId);
+  if (notAllowed) return notAllowed;
   try {
     const project = await ao.project(projectId);
     if (project.folderMissing) return `Projektordner von "${projectId}" fehlt`;
@@ -214,24 +218,22 @@ async function block({ agency, store, run, reason, now, prUrl, final = false }) 
 
 async function handleMerge({ config, agency, ao, store, run, job, now }) {
   if (!config.allowMerge) {
-    return block({ agency, store, run, reason: "Merge über die Bridge ist in diesem Setup deaktiviert (BRIDGE_ALLOW_MERGE)", now, final: true });
+    return block({ agency, store, run, reason: "Merge über die Bridge ist in diesem Setup abgeschaltet (BRIDGE_ALLOW_MERGE=0)", now, final: true });
   }
   const { workerSessionId, headSha, prNumber } = job.ao;
   const pr = (await ao.prs(workerSessionId)).find((p) => p.number === prNumber);
-  const runs = (await ao.reviews(workerSessionId))?.runs ?? [];
-  const approved = runs.some((r) => r.targetSha === pr?.headSha && r.verdict === "approved");
-  const problem = !pr ? "PR nicht mehr gefunden"
-    : pr.state !== "open" ? `PR ist ${pr.state}`
-    : pr.headSha !== headSha ? "PR hat seit dem Review neue Commits"
-    : pr.ci?.state === "failing" ? "CI ist rot"
-    : pr.mergeability?.state !== "mergeable" ? `PR nicht mergebar (${pr.mergeability?.state})`
-    : (pr.review?.unresolvedThreadCount ?? 0) > 0 ? "offene Review-Threads"
-    : !approved ? "kein AO-Review für den aktuellen Stand" : null;
-  if (problem) return block({ agency, store, run, reason: `Merge abgebrochen: ${problem}`, now, final: true });
-  await ao.merge(prNumber);
-  await agency.updateJob(run.job_id, "done", `PR #${prNumber} gemerged`, "completed");
-  store.update(run.job_id, { state: "completed", agency_job_open: 0 });
-  log("merge.done", { jobId: run.job_id, pr: prNumber });
+  const reviewRuns = (await ao.reviews(workerSessionId))?.runs ?? [];
+  const problem = mergeProblem({ pr, reviewRuns, expectedHeadSha: headSha, requireGreenCi: config.requireGreenCi });
+  if (problem) {
+    log("merge.refused", { jobId: run.job_id, pr: prNumber, reason: problem });
+    return block({ agency, store, run, reason: `Merge abgebrochen: ${problem}`, now, prUrl: pr?.url, final: true });
+  }
+  // AO verlangt prUrl und expectedHeadSha und prüft selbst noch einmal gegen
+  // GitHub: schiebt jemand in der Sekunde dazwischen, gibt es 409 statt Merge.
+  await ao.merge(prNumber, { prUrl: pr.url, expectedHeadSha: pr.headSha });
+  await agency.updateJob(run.job_id, "done", `PR #${prNumber} gemerged (${pr.headSha.slice(0, 7)})`, "completed");
+  store.update(run.job_id, { state: "completed", agency_job_open: 0, pr_url: pr.url });
+  log("merge.done", { jobId: run.job_id, pr: prNumber, head: pr.headSha });
 }
 
 // ---- Start ------------------------------------------------------------------
@@ -240,20 +242,42 @@ async function main() {
   const config = loadConfig();
   const agency = createAgencyClient(config.agencyUrl);
   const ao = createAoClient(config.aoRunFile);
+  await mkdir(config.laufzeitDir, { recursive: true });
   const store = openStore(config.dbPath);
   const once = process.argv.includes("--once");
-  log("bridge.start", { agency: config.agencyUrl, aoRunFile: config.aoRunFile, allowed: config.allowedProjects, once });
+  log("bridge.start", {
+    agency: config.agencyUrl, aoRunFile: config.aoRunFile, pipeline: config.pipelineFile,
+    allowMerge: config.allowMerge, requireGreenCi: config.requireGreenCi, once,
+  });
+
+  // Abgleich und Jobs haben getrennte Uhren: ein Agency-Ausfall bremst über
+  // den Backoff sonst auch den Projektabgleich aus, der nur AO braucht.
+  let lastSync = 0;
+  let nextTickAt = 0;
   let backoff = config.pollMs;
   for (;;) {
-    try {
-      await tick({ config, agency, ao, store });
-      backoff = config.pollMs;
-    } catch (err) {
-      log(err instanceof AoUnavailable ? "ao.unavailable" : "tick.error", { error: err.message });
-      backoff = Math.min(backoff * 2, 5 * 60_000);
+    const now = Date.now();
+    if (now - lastSync >= config.syncMs) {
+      lastSync = now;
+      try {
+        await syncProjects({ ao, agency, config, now, log });
+      } catch (err) {
+        log(err instanceof AoUnavailable ? "ao.unavailable" : "sync.error", { error: err.message });
+      }
+    }
+    if (now >= nextTickAt) {
+      try {
+        const pipeline = await readPipeline(config.pipelineFile);
+        await tick({ config, agency, ao, store, pipeline, now });
+        backoff = config.pollMs;
+      } catch (err) {
+        log(err instanceof AoUnavailable ? "ao.unavailable" : "tick.error", { error: err.message });
+        backoff = Math.min(backoff * 2, 5 * 60_000);
+      }
+      nextTickAt = Date.now() + backoff;
     }
     if (once) break;
-    await sleep(backoff);
+    await sleep(Math.min(config.pollMs, config.syncMs));
   }
   store.close();
 }

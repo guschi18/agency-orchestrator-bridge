@@ -1,23 +1,39 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MINUTE = 60_000;
 
+// Alle Standardpfade hängen am Repo, nicht am Arbeitsverzeichnis: die Bridge
+// wird mal aus bridge\, mal aus dem Startskript heraus gestartet.
+export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
 export function loadConfig(env = process.env) {
+  const profilDir = env.BRIDGE_PROFIL_DIR ?? join(repoRoot, "profil");
+  const laufzeitDir = env.BRIDGE_LAUFZEIT_DIR ?? join(repoRoot, "laufzeit");
   return {
     agencyUrl: loopbackUrl(env.AGENCY_URL ?? "http://localhost:3100", "AGENCY_URL"),
     aoRunFile: env.AO_RUN_FILE ?? join(homedir(), ".ao", "running.json"),
-    dbPath: env.BRIDGE_DB ?? "bridge.db",
-    projectsFile: env.BRIDGE_PROJECTS_FILE ?? "ao-projects.json",
-    // Nur diese AO-Projekte dürfen Aufträge bekommen. Leer = keins.
-    allowedProjects: (env.BRIDGE_ALLOWED_PROJECTS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-    allowMerge: env.BRIDGE_ALLOW_MERGE === "1",
+    dbPath: env.BRIDGE_DB ?? join(laufzeitDir, "bridge.db"),
+    profilDir,
+    laufzeitDir,
+    // Erzeugt, nicht von Hand gepflegt: Spiegel des AO-Registers für den Runner.
+    projectsFile: env.BRIDGE_PROJECTS_FILE ?? join(profilDir, "ao-projects.json"),
+    // Die einzige Freigabequelle. Früher: BRIDGE_ALLOWED_PROJECTS.
+    pipelineFile: env.BRIDGE_PIPELINE_FILE ?? join(profilDir, "pipeline.json"),
+    projectDocsDir: env.BRIDGE_PROJECT_DOCS_DIR ?? join(profilDir, "projekte"),
+    allowMerge: env.BRIDGE_ALLOW_MERGE !== "0",
+    // Erst scharfstellen, wenn jedes freigeschaltete Projekt eine CI hat (A5):
+    // ohne Action meldet AO dauerhaft "unknown" und kein Merge käme durch.
+    requireGreenCi: env.BRIDGE_REQUIRE_GREEN_CI === "1",
     pollMs: Number(env.BRIDGE_POLL_MS ?? 15_000),
+    syncMs: Number(env.BRIDGE_SYNC_MS ?? 5 * MINUTE),
     limits: {
       workerTimeoutMs: Number(env.BRIDGE_WORKER_TIMEOUT_MIN ?? 15) * MINUTE,
       maxReviewCycles: Number(env.BRIDGE_MAX_REVIEW_CYCLES ?? 3),
       stallMs: Number(env.BRIDGE_STALL_MIN ?? 240) * MINUTE,
       leaseRefreshMs: 30 * MINUTE,
+      requireGreenCi: env.BRIDGE_REQUIRE_GREEN_CI === "1",
     },
   };
 }

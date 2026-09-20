@@ -11,6 +11,6 @@
     "start": "node index.mjs",
     "once": "node index.mjs --once",
     "sync-projects": "node sync-projects.mjs",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.mjs\""
   }
 }

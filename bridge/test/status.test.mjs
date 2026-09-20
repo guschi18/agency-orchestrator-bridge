@@ -38,3 +38,22 @@ for (const [name, input, expected] of cases) {
     assert.equal(d.kind, expected, JSON.stringify(d));
   });
 }
+
+// A5: sobald jedes Projekt eine CI hat, reicht "nicht rot" nicht mehr.
+const strict = { ...limits, requireGreenCi: true };
+
+test("mit requireGreenCi macht CI 'unknown' keine Karte mehr fertig", () => {
+  const d = decide({ run, worker, prs: [pr], reviewRuns: [approved], now, limits: strict });
+  assert.equal(d.kind, "running", JSON.stringify(d));
+});
+
+test("mit requireGreenCi ist eine grüne CI der Weg zur Merge-Karte", () => {
+  const green = { ...pr, ci: { state: "passing" } };
+  const d = decide({ run, worker, prs: [green], reviewRuns: [approved], now, limits: strict });
+  assert.equal(d.kind, "ready", JSON.stringify(d));
+});
+
+test("ohne requireGreenCi bleibt eine grüne CI genauso fertig", () => {
+  const green = { ...pr, ci: { state: "passing" } };
+  assert.equal(decide({ run, worker, prs: [green], reviewRuns: [approved], now, limits }).kind, "ready");
+});

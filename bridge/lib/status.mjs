@@ -48,7 +48,11 @@ export function decide({ run, worker, prs = [], reviewRuns = [], now, limits }) 
   if (status === "needs_input") return { kind: "blocked", reason: `Worker wartet auf Eingabe – in AO antworten (${worker.id})`, pr, reviewCycles };
 
   const reviewed = headRun && DONE_REVIEW.has(headRun.status) && headRun.verdict === "approved";
-  if (reviewed && pr.state === "open" && ci !== "failing" && ci !== "pending") {
+  // Ohne CI im Repo meldet AO dauerhaft "unknown" — dann genügt "nicht rot".
+  // Sobald jedes freigeschaltete Projekt eine Action hat, verlangt
+  // BRIDGE_REQUIRE_GREEN_CI=1 einen wirklich grünen Check (A5).
+  const ciOk = limits.requireGreenCi ? ci === "passing" : ci !== "failing" && ci !== "pending";
+  if (reviewed && pr.state === "open" && ciOk) {
     return {
       kind: "ready", summary, pr, reviewCycles,
       reviewSummary: `${headRun.harness} hat ${shortSha(pr.headSha)} freigegeben`
