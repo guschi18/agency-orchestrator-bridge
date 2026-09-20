@@ -4,6 +4,11 @@ Gilt immer, für jeden Lauf. Was ein einzelnes Projekt angeht, steht in
 `profil/projekte/<projektId>.md`; welche Projekte aktiv sind, steht in
 `profil/pipeline.json`.
 
+Die Kurzfassung dieser Datei steht als „Dream" in Agency (Settings → My dream).
+Beides ist dieselbe Aussage — ändert sich eine Seite, zieht die andere nach.
+**Nichts Projektspezifisches gehört hierher oder in den Dream**: beide gelten
+für alle Projekte und wären beim nächsten Projekt falsch.
+
 ## Wer
 Solo-Entwickler, Deutsch. Baut private Tools und Lern-Apps, meist Node und
 Vanilla-Web. Arbeitet allein, ohne Team und ohne Deadline von außen.

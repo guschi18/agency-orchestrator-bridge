@@ -25,6 +25,11 @@
 .PARAMETER AgencyPath
   Agency-Klon mit dem Skill (Default: D:\Tools\Agency\agency).
 
+.PARAMETER Port
+  Port, auf dem Agency laeuft. Ohne Angabe sucht das Skript sie auf 3100 und
+  3000 - eine von Hand gestartete Agency landet sonst auf 3000, und der Runner
+  wuerde seine Karten an einen toten Port schicken.
+
 .PARAMETER NoClipboard
   Den Auftrag nicht in die Zwischenablage legen.
 
@@ -36,6 +41,7 @@ param(
   [Parameter(Mandatory)][string]$ProjectId,
   [int]$MaxKarten = 0,
   [string]$AgencyPath = 'D:\Tools\Agency\agency',
+  [int]$Port = 0,
   [switch]$NoClipboard
 )
 
@@ -83,6 +89,29 @@ if (-not (Test-Path (Join-Path $skillDir 'SKILL.md'))) {
   Fail "Agency-Skill nicht gefunden: $skillDir. Stimmt -AgencyPath?"
 }
 
+# Der Auftrag nennt die Agency-URL. Raet das Skript hier falsch, pusht der
+# Runner seine Karten an einen toten Port und merkt es erst am Ende.
+function Test-AgencyPort([int]$p) {
+  try {
+    $r = Invoke-WebRequest -Uri "http://localhost:$p/api/state" -Headers @{ 'x-radar-local-agent' = '1' } `
+      -TimeoutSec 3 -SkipHttpErrorCheck -ErrorAction Stop
+    return $r.StatusCode -lt 500
+  } catch { return $false }
+}
+
+if ($Port -gt 0) {
+  if (-not (Test-AgencyPort $Port)) { Fail "Auf http://localhost:$Port antwortet keine Agency." }
+} else {
+  $Port = @(3100, 3000) | Where-Object { Test-AgencyPort $_ } | Select-Object -First 1
+  if (-not $Port) {
+    Fail "Agency laeuft nicht (weder auf 3100 noch auf 3000). Starten: pwsh -File `"$PSScriptRoot\start-pipeline.ps1`""
+  }
+}
+$AgencyUrl = "http://localhost:$Port"
+if ($Port -ne 3100) {
+  Write-Host "  !   Agency laeuft auf Port $Port statt 3100. Laeuft die Bridge gegen denselben Port?" -ForegroundColor Yellow
+}
+
 $auftrag = @"
 Du bist der Agency-Runner fuer einen einmaligen Discovery-Lauf ueber **ein** Projekt: ``$ProjectId``.
 
@@ -100,7 +129,7 @@ Du bist der Agency-Runner fuer einen einmaligen Discovery-Lauf ueber **ein** Pro
    in Karten schreiben.
 
 3. Finde die wertvollsten Verbesserungen nach den Massstaeben der Projektdatei und pushe
-   **hoechstens $MaxKarten Karten** an die laufende Agency unter http://localhost:3100
+   **hoechstens $MaxKarten Karten** an die laufende Agency unter $AgencyUrl
    (POST /api/ideas mit Header ``x-radar-local-agent: 1``, z. B.
    ``node "$AgencyPath\scripts\push-card.mjs" <meta.json>`` mit Arbeitsdateien unter
    $AgencyPath\agent-work\).
@@ -116,7 +145,7 @@ Du bist der Agency-Runner fuer einen einmaligen Discovery-Lauf ueber **ein** Pro
    - Karten-HTML: kein ``<a>``, ``<script>``, ``<svg>``, keine Event-Handler, keine externen Bilder.
      Links nur als ``<button data-radar-action="open" data-radar-url="...">``.
 
-4. Pruefe nach dem Push mit GET http://localhost:3100/api/state (Header ``x-radar-local-agent: 1``),
+4. Pruefe nach dem Push mit GET $AgencyUrl/api/state (Header ``x-radar-local-agent: 1``),
    dass die Karten angekommen sind.
 
 5. Antworte am Ende mit: Liste der Karten (id, dedupeKey, Titel, RISE) und was du nicht pruefen konntest.
@@ -141,7 +170,7 @@ Write-Host ''
 Write-Host 'So geht es weiter:' -ForegroundColor Cyan
 Write-Host '  1. In der AO-App eine neue Session mit Claude/Opus oeffnen.'
 Write-Host '  2. Den Auftrag einfuegen und abschicken.'
-Write-Host '  3. Karten im Feed ansehen: http://localhost:3100'
+Write-Host "  3. Karten im Feed ansehen: $AgencyUrl"
 Write-Host ''
 Write-Host '--- Auftrag ---' -ForegroundColor DarkGray
 Write-Host $auftrag

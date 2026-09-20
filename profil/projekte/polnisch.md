@@ -4,18 +4,29 @@
 Tests mit `node --test` (228 Stück, grün). Repo `guschi18/polnisch-app`,
 Ordner `D:/Polnisch`, Default-Branch `main`.
 
-## Ziel in diesem Quartal
-Verlässlicher Inhalt: keine ungeprüften Sätze mehr im Kurs.
+## Ziel
+**Ich will mit dieser App einfach und schnell Polnisch lernen.** Alles wird
+daran gemessen, ob es mich schneller zum freien Sprechen bringt.
+
+Daraus folgt die Reihenfolge, in der Befunde zählen:
+
+1. **Verlässlicher Inhalt.** Ein falscher Satz lehrt mir etwas Falsches — das
+   ist teurer als jede fehlende Funktion. Keine ungeprüften Sätze im Kurs.
+2. **Kein Bruch im Lernablauf.** Was mich beim Üben aufhält oder rauswirft,
+   kostet mich Wiederholungen und damit Tempo.
+3. **Mehr Übung je Minute.** Was mich schneller vom Lesen zum Sprechen bringt.
 
 ## Wonach suchen
 - Inhaltsfehler und ungeprüfte generierte Sätze
-- kaputte oder fehlende Tests
-- Reibung im Lernablauf, die Nutzer merken
+- Reibung im Lernablauf, die ich beim Üben merke
+- Stellen, an denen ich viel Zeit für wenig Übung aufwende
+- kaputte oder fehlende Tests, besonders rund um Inhalt und Fortschritt
 
 ## Wonach nicht suchen
 - Design-Umbauten
 - Refactorings ohne Anlass
 - neue Abhängigkeiten
+- Funktionen, die gut aussehen, mich aber nicht schneller sprechen lassen
 
 ## Quellen
 Code, `test/`, `docs/`, `brainstorms/`, `.scratch/`, `lektionen.md`,
