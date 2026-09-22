@@ -1,11 +1,15 @@
+import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
   RUNNER_ALLOW, RUNNER_DENY, localRunnerAlive, resolveClaudeBinary, runnerArgv, startLocalRunner,
 } from "../lib/runner-launch.mjs";
 
+// Plattformneutral absolut: auf Windows wie auf Linux besteht die Prüfung.
+const KARTENORDNER = path.resolve("karten-beispiel");
+
 function argv(over = {}) {
-  return runnerArgv({ model: "claude-sonnet-5", prompt: "Untersuche polnisch.", writeDir: "D:\\cards", ...over });
+  return runnerArgv({ model: "claude-sonnet-5", prompt: "Untersuche polnisch.", writeDir: KARTENORDNER, ...over });
 }
 
 function valueOf(args, flag) {
@@ -38,8 +42,10 @@ test("--print kann nicht nachfragen, also steht das Nötige auf der Erlaubnislis
   const allow = valueOf(argv(), "--allowed-tools").split(",");
   // Ohne Read/Grep untersucht er nichts, ohne Bash(node:*) pusht er keine Karte.
   for (const tool of ["Read", "Glob", "Grep", "Bash(node:*)"]) assert.ok(allow.includes(tool), tool);
-  assert.ok(allow.includes("Write(D:/cards/**)"));
-  assert.ok(allow.includes("Edit(D:/cards/**)"));
+  // Der Kartenordner steht in Pfad-Schreibweise des Laufwerk-Roots (Fwd-Slashes).
+  const kartenGlob = KARTENORDNER.replace(/\\/g, "/").replace(/^([A-Za-z]:)/, "$1");
+  assert.ok(allow.includes(`Write(${kartenGlob}/**)`));
+  assert.ok(allow.includes(`Edit(${kartenGlob}/**)`));
   assert.deepEqual(allow.slice(0, RUNNER_ALLOW.length), RUNNER_ALLOW);
 });
 
