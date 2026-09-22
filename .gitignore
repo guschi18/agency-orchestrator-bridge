@@ -4,5 +4,9 @@ bridge/bridge.db-*
 bridge/ao-projects.json
 profil/ao-projects.json
 
+# Session-Transkripte und lokale Laufzeitdaten gehören nicht ins Repo
+codex-session-*.md
+*.log
+
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
