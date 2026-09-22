@@ -162,7 +162,7 @@ Go-Daemon, der parallele Agenten-Sessions beaufsichtigt. Mentales Modell (`docs/
 | Loopback-Listener | `127.0.0.1:3001` (Default, `AO_PORT` überschreibbar), **ohne Authentifizierung** |
 | Handshake-Datei | `~/.ao/running.json` → `{pid, port, startedAt, owner, …}` |
 | LAN-Listener | opt-in, `0.0.0.0:3011`, Bearer-Passwort, für Mobile |
-| Binary | `C:\Users\phili\AppData\Local\Programs\agent-orchestrator\resources\daemon\ao.exe` (nicht im PATH) |
+| Binary | `%LOCALAPPDATA%\Programs\agent-orchestrator\resources\daemon\ao.exe` (nicht im PATH) |
 | SSE | `GET /api/v1/events` — CDC-Strom, `Last-Event-ID`/`X-AO-Event-After` für lückenlosen Wiedereinstieg, Heartbeat 10 s |
 | OpenAPI | `GET /api/v1/openapi.yaml` (generiert aus den Go-DTOs, `backend/internal/httpd/apispec/`) |
 
@@ -276,7 +276,7 @@ Begründung: Die zwei Aufgaben haben unterschiedliche Fehlermodi. Kartenbau darf
 
 | Komponente | Wo | Aufgabe |
 |---|---|---|
-| Agency-App | `D:\Tools\Agency\agency`, Port 3100 | Kartenstapel, Entscheidungen, Job-Queue |
+| Agency-App | `D:\Tools\Agency-AO\Agency`, Port 3100 | Kartenstapel, Entscheidungen, Job-Queue |
 | AO-Daemon | `127.0.0.1:3001` | Projekte, Worker, Worktrees, PR/CI/Review |
 | **`ao-agency-bridge`** | neu, `D:\Tools\Agency\bridge` | Jobs → AO, AO-Zustände → Karten |
 | Agency-Runner | AO-Standalone-Session, Claude Code oder Codex | Discovery, Kartenbau, `me.md`-Pflege |

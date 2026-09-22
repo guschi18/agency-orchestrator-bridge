@@ -1,0 +1,27 @@
+{
+  "project": "polnisch",
+  "category": "polnisch",
+  "headline": "Beispiel: Lückenhafte Tests für die Lektionsprüfung schließen",
+  "dedupeKey": "polnisch:beispiel-thema",
+  "rise": { "reach": 3, "impact": 4, "strategicFit": 4, "ease": 3 },
+  "effortSeconds": 1800,
+  "effortReason": "Ein Testmodul, keine Änderung an der Produktlogik",
+  "agentName": "ao-agency-runner",
+  "agentContext": {
+    "ao": {
+      "projectId": "polnisch",
+      "action": "implement",
+      "route": "orchestrator",
+      "task": {
+        "objective": "Ein Satz: was am Ende anders ist.",
+        "evidence": ["Datei:Zeile — was dort belegt ist"],
+        "acceptanceCriteria": ["Prüfbar: npm test grün, neuer Test deckt X ab"],
+        "constraints": ["Keine .env, keine Änderung außerhalb von Y"]
+      }
+    }
+  },
+  "doActions": [
+    { "label": "Mit AO umsetzen", "prompt": "Beispiel-Thema mit AO umsetzen." }
+  ],
+  "cardHtmlFile": "card.html"
+}

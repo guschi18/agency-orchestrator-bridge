@@ -19,8 +19,8 @@ Agency ist dein Entscheidungsstapel: Ein Agent untersucht deine Projekte und leg
 ## 2. Ordnerstruktur
 
 ```
-D:\Tools\Agency\agency\            Agency-Klon (unverändert, nur git pull)
-D:\agency-orchestrator-bridge\     unser Repo
+D:\Tools\Agency-AO\Agency\            Agency-Klon (unverändert, nur git pull)
+D:\Tools\Agency-AO\agency-orchestrator-bridge\     unser Repo
   bridge\                          die Bridge (fertig, 33 Tests grün)
   profil\                          dein Profil für den Runner
     me.md                          wer du bist, Regeln, Sprache, Ausführung
@@ -115,10 +115,9 @@ Der Sync legt für jedes freigeschaltete Projekt automatisch eine solche Datei m
 ### Schritt 1 — Agency dauerhaft installieren (ca. 10 Min)
 
 ```powershell
-mkdir D:\Tools\Agency -Force
-cd D:\Tools\Agency
-git clone https://github.com/browser-use/agency.git agency
-cd agency; npm ci
+cd D:\Tools\Agency-AO
+git clone https://github.com/browser-use/agency.git Agency
+cd Agency; npm ci
 ```
 
 Nicht `npm run dev` benutzen: Das Skript nutzt POSIX-Syntax und scheitert unter Windows. Das Startskript aus Schritt 3 setzt die Umgebungsvariable selbst.
@@ -151,7 +150,7 @@ Die Bridge macht den Projektabgleich danach selbst alle 5 Minuten — du musst n
 ### Schritt 4 — Erstes Projekt: `polnisch` (`D:\Polnisch`)
 
 ```powershell
-pwsh -File D:\Tools\Agent_Orchestrator\ao-rules\apply-ao-project.ps1 -ProjectId polnisch -RepoPath D:\Polnisch
+pwsh -File D:\Tools\Agency-AO\Agent_Orchestrator\ao-rules\apply-ao-project.ps1 -ProjectId polnisch -RepoPath D:\Polnisch
 ```
 
 Das setzt gleich dein Standard-Setup: Claude/Opus als Orchestrator, OpenCode/GLM als Worker, Codex als Reviewer, Auto-Review an.

@@ -7,9 +7,10 @@
 // --out schreibt die Datei selbst und gibt nur den Pfad aus. Das ist der Weg
 // für PowerShell: über die Pipe liest es Nodes UTF-8-Ausgabe als CP850 und
 // macht aus jedem "ü" ein "├╝".
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { loadConfig } from "./lib/config.mjs";
 import { readPipeline } from "./lib/pipeline.mjs";
+import { writeRepoMap } from "./lib/repo-map.mjs";
 import { buildRunnerPrompt, runnerPaths } from "./lib/runner.mjs";
 
 const args = process.argv.slice(2);
@@ -32,9 +33,20 @@ if (!project) {
 const pipeline = await readPipeline(config.pipelineFile);
 const maxKarten = Number(maxArg) > 0 ? Number(maxArg) : (pipeline[projectId]?.maxKarten ?? 3);
 
+const paths = runnerPaths(config, projectId);
+
+// Der Auftrag verweist auf die Repo-Karte. Ohne sie zeigt er auf eine Datei,
+// die es nicht gibt — also hier erheben, nicht nur bei der Bridge.
+await mkdir(config.laufzeitDir, { recursive: true });
+try {
+  await writeRepoMap({ projectId, projectPath: project.path, outFile: paths.repoMapFile });
+} catch (err) {
+  console.error(`Repo-Karte konnte nicht erhoben werden: ${err.message}`);
+}
+
 const text = buildRunnerPrompt({
   projectId, projectPath: project.path, maxKarten,
-  agencyUrl: config.agencyUrl, paths: runnerPaths(config, projectId),
+  agencyUrl: config.agencyUrl, paths,
 });
 
 if (outFile) {

@@ -23,10 +23,18 @@ export function loadConfig(env = process.env) {
     pipelineFile: env.BRIDGE_PIPELINE_FILE ?? join(profilDir, "pipeline.json"),
     projectDocsDir: env.BRIDGE_PROJECT_DOCS_DIR ?? join(profilDir, "projekte"),
     // Agency-Klon: der Runner-Auftrag verweist auf dessen Skill und push-card.mjs.
-    agencyPath: env.AGENCY_PATH ?? "D:\\Tools\\Agency\\agency",
-    // Der Runner denkt, er schreibt nicht — dafür das stärkere Modell.
+    agencyPath: env.AGENCY_PATH ?? "D:\\Tools\\Agency-AO\\Agency",
+    // Der Runner liest nur und baut Karten. Sonnet reicht dafür und kostet
+    // bei gleicher Tokenzahl rund 60 % weniger (Token-Analyse 2026-09-19);
+    // wer schärfere Befunde will, setzt BRIDGE_RUNNER_MODEL=claude-opus-5.
     runnerHarness: env.BRIDGE_RUNNER_HARNESS ?? "claude-code",
-    runnerModel: env.BRIDGE_RUNNER_MODEL ?? "claude-opus-5",
+    runnerModel: env.BRIDGE_RUNNER_MODEL ?? "claude-sonnet-5",
+    // "lokal": die Bridge startet claude selbst und bestimmt die Kommandozeile
+    // — nur so gehen die Maßnahmen 1–3 der Token-Analyse (keine Skills, kein
+    // MCP, Schreibrecht nur im Kartenordner). AOs POST /sessions nimmt diese Felder nicht an.
+    // "ao": der alte Weg über eine AO-Session, falls man den Lauf dort sehen
+    // will. Er kostet rund 8.400 Präfix-Token je Turn mehr.
+    runnerMode: env.BRIDGE_RUNNER_MODE === "ao" ? "ao" : "lokal",
     allowMerge: env.BRIDGE_ALLOW_MERGE !== "0",
     // Hinweiskarten für offene PRs ohne AO-Auftrag. Braucht die gh-CLI;
     // fehlt sie, wird der Abgleich davon nicht aufgehalten.

@@ -28,22 +28,22 @@
   Startet alles, oeffnet aber keinen Browser.
 
 .PARAMETER AgencyPath
-  Agency-Klon (Default: D:\Tools\Agency\agency).
+  Agency-Klon (Default: D:\Tools\Agency-AO\Agency).
 
 .PARAMETER Port
   Port fuer Agency (Default: 3100).
 
 .EXAMPLE
-  pwsh -File D:\agency-orchestrator-bridge\scripts\start-pipeline.ps1
+  pwsh -File D:\Tools\Agency-AO\agency-orchestrator-bridge\scripts\start-pipeline.ps1
 .EXAMPLE
-  pwsh -File D:\agency-orchestrator-bridge\scripts\start-pipeline.ps1 -Stop
+  pwsh -File D:\Tools\Agency-AO\agency-orchestrator-bridge\scripts\start-pipeline.ps1 -Stop
 #>
 [CmdletBinding()]
 param(
   [switch]$Stop,
   [switch]$Status,
   [switch]$NoBrowser,
-  [string]$AgencyPath = 'D:\Tools\Agency\agency',
+  [string]$AgencyPath = 'D:\Tools\Agency-AO\Agency',
   [int]$Port = 3100
 )
 

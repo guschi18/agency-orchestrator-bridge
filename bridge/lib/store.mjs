@@ -39,10 +39,19 @@ export function openStore(path) {
   const get = db.prepare("SELECT * FROM runs WHERE job_id = ?");
   const lastDiscover = db.prepare(
     "SELECT * FROM runs WHERE action = 'discover' AND ao_project_id = ? ORDER BY job_id DESC LIMIT 1");
+  // Der Doppelklick-Schutz im lokalen Modus. Der gerade angelegte Job muss
+  // draußen bleiben — er steht beim Prüfen schon in der Tabelle und wäre sonst
+  // sein eigener Vorgänger.
+  const priorDiscover = db.prepare(`
+    SELECT worker_session_id FROM runs
+    WHERE action = 'discover' AND ao_project_id = ? AND job_id <> ? AND worker_session_id IS NOT NULL
+    ORDER BY job_id DESC LIMIT 1`);
   return {
     get: (jobId) => get.get(jobId) ?? null,
     // Für die Runner-Karte: wann lief zuletzt ein Discovery-Lauf?
     lastDiscover: (projectId) => lastDiscover.get(projectId) ?? null,
+    priorDiscoverSession: (projectId, exceptJobId) =>
+      priorDiscover.get(projectId, exceptJobId)?.worker_session_id ?? null,
     // Hinweiskarten werden genau einmal gelegt. Ohne dieses Gedächtnis käme
     // eine abgelehnte Karte beim nächsten Abgleich zurück.
     // PRs, die aus einem AO-Auftrag der Bridge stammen — die brauchen keine

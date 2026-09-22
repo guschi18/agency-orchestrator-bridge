@@ -2,7 +2,7 @@
 
 **Stand:** 17. September 2026  
 **Untersuchungsziel:** Prüfen, wie aus Agency und dem lokalen Fork von Agent Orchestrator eine kontrollierte Pipeline von der Ideenfindung bis zum geprüften Pull Request werden kann.  
-**Lokale Quellen:** `D:\Tools\Agency` und `D:\Tools\Agent_Orchestrator`
+**Lokale Quellen:** `D:\Tools\Agency-AO\Agency` und `D:\Tools\Agency-AO\Agent_Orchestrator`
 
 ## 1. Kurzurteil
 
@@ -75,7 +75,7 @@ Die offizielle README beschreibt ausdrücklich, dass Agency keine eigene Hinterg
 
 ### 2.3 Untersuchte AO-Version
 
-Analysiert wurde der lokale Fork unter `D:\Tools\Agent_Orchestrator`:
+Analysiert wurde der lokale Fork unter `D:\Tools\Agency-AO\Agent_Orchestrator`:
 
 - Branch: `main`
 - HEAD: `f5a9166ac` vom 17. September 2026

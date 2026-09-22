@@ -4,7 +4,7 @@
 
 - **Sandbox:** `D:\Sandbox_Agency_AO\` — Agency `53651ce`, AO-Fork-Clone `f5a9166`, Polnisch-Clone `b616f41`; AO-Daemon isoliert (`ao daemon`, Port 3201, eigenes `AO_DATA_DIR`)
 - **PR:** https://github.com/guschi18/polnisch-sandbox/pull/1 (privates Repo, offen)
-- **Bridge:** `D:\agency-orchestrator-bridge\bridge\` (Node, ohne Abhängigkeiten, 31 Tests grün)
+- **Bridge:** `D:\Tools\Agency-AO\agency-orchestrator-bridge\bridge\` (Node, ohne Abhängigkeiten, 31 Tests grün)
 
 ## Zeitleiste
 

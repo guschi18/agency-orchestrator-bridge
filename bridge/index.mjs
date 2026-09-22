@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadConfig } from "./lib/config.mjs";
 import { AoUnavailable, createAoClient, ensureOrchestrator, findWorker } from "./lib/ao-client.mjs";
@@ -8,6 +9,8 @@ import { buildOrchestratorBrief, workerNameFor } from "./lib/contract.mjs";
 import { mergeProblem } from "./lib/merge.mjs";
 import { analysisAllowed, dispatchProblem, readPipeline, requiresGreenCi, syncProjects } from "./lib/pipeline.mjs";
 import { buildRunnerPrompt, runnerCard, runnerPaths } from "./lib/runner.mjs";
+import { localRunnerAlive, resolveClaudeBinary, startLocalRunner } from "./lib/runner-launch.mjs";
+import { writeRepoMap } from "./lib/repo-map.mjs";
 import { decide, progressed } from "./lib/status.mjs";
 import { openStore } from "./lib/store.mjs";
 
@@ -15,14 +18,24 @@ export function log(event, fields = {}) {
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
 }
 
-export async function tick({ config, agency, ao, store, pipeline = {}, now = Date.now() }) {
-  await dispatchNew({ config, agency, ao, store, pipeline, now });
-  await syncOpen({ config, agency, ao, store, pipeline, now });
+// Der Start des Runners und das Erheben der Repo-Karte fassen echte Prozesse
+// und das Dateisystem an. Als Bündel hereingereicht bleiben sie im Test
+// ersetzbar, ohne dass ein Test wirklich claude startet.
+export const realRunner = {
+  start: startLocalRunner,
+  alive: localRunnerAlive,
+  resolveBinary: () => resolveClaudeBinary(),
+  writeRepoMap,
+};
+
+export async function tick({ config, agency, ao, store, pipeline = {}, now = Date.now(), runner = realRunner }) {
+  await dispatchNew({ config, agency, ao, store, pipeline, now, runner });
+  await syncOpen({ config, agency, ao, store, pipeline, now, runner });
 }
 
 // ---- Neue Jobs übernehmen ----------------------------------------------------
 
-async function dispatchNew({ config, agency, ao, store, pipeline, now }) {
+async function dispatchNew({ config, agency, ao, store, pipeline, now, runner }) {
   for (const raw of await agency.jobs()) {
     const job = aoJobFromAgencyJob(raw);
     if (!job) continue; // kein AO-Job: bleibt beim Agency-Runner
@@ -55,7 +68,7 @@ async function dispatchNew({ config, agency, ao, store, pipeline, now }) {
       continue;
     }
     if (action === "merge") await handleMerge({ config, agency, ao, store, run: store.get(job.jobId), job, pipeline, now });
-    else if (action === "discover") await handleDiscover({ config, agency, ao, store, run: store.get(job.jobId), pipeline, now });
+    else if (action === "discover") await handleDiscover({ config, agency, ao, store, run: store.get(job.jobId), pipeline, now, runner });
     else if (action === "implement") await sendBrief({ ao, store, run: store.get(job.jobId), job, now });
     else if (action === "acknowledge") {
       // "Gesehen": kein Auftrag, nur das Abhaken. Die Karte ist damit erledigt
@@ -108,10 +121,14 @@ async function sendBrief({ ao, store, run, job, now }) {
 
 // ---- Laufende Aufträge nachführen -------------------------------------------
 
-async function syncOpen({ config, agency, ao, store, pipeline, now }) {
+async function syncOpen({ config, agency, ao, store, pipeline, now, runner }) {
   for (const run of store.open()) {
     try {
       if (run.action === "merge") continue;
+      if (run.action === "discover") {
+        await syncDiscover({ config, agency, ao, store, run, pipeline, now, runner });
+        continue;
+      }
       if (run.state === "dispatching" && run.sent_at == null) {
         // Absturz oder AO-Ausfall zwischen Anlegen und Senden: fortsetzen.
         const card = JSON.parse(run.card_json);
@@ -130,6 +147,26 @@ async function syncOpen({ config, agency, ao, store, pipeline, now }) {
       store.update(run.job_id, { error: err.message.slice(0, 500) });
     }
   }
+}
+
+async function syncDiscover({ config, agency, ao, store, run, pipeline, now, runner }) {
+  // AO-Sessions werden wie bisher beim Start abgeschlossen. Nur der lokale
+  // Prozess kann hier ohne teuren API-Aufruf exakt beobachtet werden.
+  if (!String(run.worker_session_id ?? "").startsWith("lokal:")) return;
+  if (runner.alive(run.worker_session_id)) return;
+
+  const project = await ao.project(run.ao_project_id);
+  const entry = pipeline[run.ao_project_id] ?? {};
+  const paths = runnerPaths(config, run.ao_project_id);
+  const pid = String(run.worker_session_id).replace("lokal:", "");
+  await agency.updateJob(run.job_id, "done", "Discovery-Run beendet; neue Vorschläge stehen im Feed", "completed");
+  store.update(run.job_id, { state: "completed", agency_job_open: 0, last_summary: "Discovery-Run beendet" });
+  await pushRunnerCard({
+    agency, projectId: run.ao_project_id, projectPath: project.path,
+    maxKarten: entry.maxKarten ?? 3, docFile: paths.docFile, now,
+    note: `beendet (Prozess ${pid})`,
+  });
+  log("discover.completed", { jobId: run.job_id, projectId: run.ao_project_id, session: run.worker_session_id });
 }
 
 async function syncRun({ config, agency, ao, store, run, pipeline, now }) {
@@ -236,48 +273,107 @@ async function block({ agency, store, run, reason, now, prUrl, final = false }) 
   }
 }
 
-// Ein Klick auf "Runner starten": genau eine Session, die das Projekt liest
-// und Karten pusht. Die Karten kommen vom Runner selbst, nicht von hier — die
+// Läuft für dieses Projekt schon ein Lauf? Im AO-Modus fragt das AO, im
+// lokalen Modus der zuletzt vermerkte Prozess. Beides beantwortet dieselbe
+// Frage: einen zweiten Lauf nicht noch einmal bezahlen.
+async function runnerAlreadyRunning({ config, ao, store, run, runner }) {
+  if (config.runnerMode === "ao") {
+    const { worker } = await findWorker(ao, run.ao_project_id, run.worker_name);
+    return worker ? `Session ${worker.id}` : null;
+  }
+  const id = store.priorDiscoverSession(run.ao_project_id, run.job_id);
+  return id && runner.alive(id) ? `Prozess ${String(id).replace("lokal:", "")}` : null;
+}
+
+async function pushRunnerCard({ agency, projectId, projectPath, maxKarten, docFile, now, note }) {
+  try {
+    await agency.pushCard(runnerCard({
+      projectId, projectPath, maxKarten, docFile,
+      lastRunAt: new Date(now).toISOString().slice(0, 16).replace("T", " "),
+      lastRunNote: note,
+    }));
+  } catch (err) {
+    log("runner-card.failed", { projectId, error: err.message });
+  }
+}
+
+// Ein Klick auf "Runner starten": genau ein Lauf, der das Projekt liest und
+// Karten pusht. Die Karten kommen vom Runner selbst, nicht von hier — die
 // Bridge meldet nur, dass der Lauf angefangen hat.
-async function handleDiscover({ config, agency, ao, store, run, pipeline, now }) {
+async function handleDiscover({ config, agency, ao, store, run, pipeline, now, runner }) {
   const projectId = run.ao_project_id;
-  const { worker: existing } = await findWorker(ao, projectId, run.worker_name);
-  if (existing) {
+  const busy = await runnerAlreadyRunning({ config, ao, store, run, runner });
+  if (busy) {
     // Doppelklick oder erneut ausgegebener Job: nicht noch einen Lauf bezahlen.
-    await agency.updateJob(run.job_id, "done", `Runner läuft bereits (Session ${existing.id})`, "completed");
-    store.update(run.job_id, { state: "completed", agency_job_open: 0, worker_session_id: existing.id });
-    log("discover.skipped", { jobId: run.job_id, reason: "Session existiert bereits", session: existing.id });
+    await agency.updateJob(run.job_id, "done", `Runner läuft bereits (${busy})`, "completed");
+    store.update(run.job_id, { state: "completed", agency_job_open: 0 });
+    log("discover.skipped", { jobId: run.job_id, reason: "Lauf existiert bereits", busy });
     return;
   }
 
   const project = await ao.project(projectId);
   const entry = pipeline[projectId] ?? {};
+  const paths = runnerPaths(config, projectId);
+
+  // Maßnahme 4: die Fakten über das Repo einmal ohne Modell erheben. Schlägt
+  // das fehl, läuft der Runner trotzdem — er erkundet dann eben selbst.
+  try {
+    const map = await runner.writeRepoMap({
+      projectId, projectPath: project.path, outFile: paths.repoMapFile, now,
+    });
+    log("repo-map.written", { projectId, ...map });
+  } catch (err) {
+    log("repo-map.failed", { projectId, error: err.message });
+  }
+
   const prompt = buildRunnerPrompt({
     projectId,
     projectPath: project.path,
     maxKarten: entry.maxKarten ?? 3,
     agencyUrl: config.agencyUrl,
-    paths: runnerPaths(config, projectId),
+    paths,
   });
-  const session = await ao.spawn({
-    projectId, kind: "worker", displayName: run.worker_name,
-    harness: config.runnerHarness, model: config.runnerModel, prompt,
-  });
-  await agency.updateJob(run.job_id, "done", `Runner gestartet (Session ${session.id}), Karten folgen im Feed`, "completed");
-  store.update(run.job_id, { state: "completed", agency_job_open: 0, worker_session_id: session.id, last_summary: "Runner gestartet" });
-  log("discover.started", { jobId: run.job_id, projectId, session: session.id, chars: prompt.length });
 
-  // Den Knopf gleich wieder hinlegen, mit dem Stand dieses Laufs.
-  try {
-    await agency.pushCard(runnerCard({
-      projectId, projectPath: project.path, maxKarten: entry.maxKarten ?? 3,
-      docFile: runnerPaths(config, projectId).docFile,
-      lastRunAt: new Date(now).toISOString().slice(0, 16).replace("T", " "),
-      lastRunNote: `Session ${session.id}`,
-    }));
-  } catch (err) {
-    log("runner-card.failed", { projectId, error: err.message });
+  let sessionId;
+  let note;
+  if (config.runnerMode === "ao") {
+    const session = await ao.spawn({
+      projectId, kind: "worker", displayName: run.worker_name,
+      harness: config.runnerHarness, model: config.runnerModel, prompt,
+    });
+    sessionId = session.id;
+    note = `Session ${session.id}`;
+  } else {
+    await mkdir(paths.cardDir, { recursive: true });
+    const started = await runner.start({
+      binary: runner.resolveBinary(),
+      model: config.runnerModel,
+      prompt,
+      // Nicht im Projektordner: der Runner soll dort nichts anlegen. Er liest
+      // es über den absoluten Pfad, den --add-dir freigibt.
+      cwd: join(config.laufzeitDir, "runner-cwd", projectId),
+      addDirs: [project.path, config.profilDir, paths.skillDir, join(config.agencyPath, "scripts"), paths.cardDir],
+      writeDir: paths.cardDir,
+      logFile: join(config.laufzeitDir, `runner-${projectId}.log`),
+    });
+    sessionId = `lokal:${started.pid}`;
+    note = `Prozess ${started.pid}, Protokoll ${started.logFile}`;
   }
+
+  if (config.runnerMode === "ao") {
+    await agency.updateJob(run.job_id, "done", `Runner gestartet (${note}), Karten folgen im Feed`, "completed");
+    store.update(run.job_id, { state: "completed", agency_job_open: 0, worker_session_id: sessionId, last_summary: "Runner gestartet" });
+    await pushRunnerCard({
+      agency, projectId, projectPath: project.path, maxKarten: entry.maxKarten ?? 3,
+      docFile: paths.docFile, now, note,
+    });
+  } else {
+    const summary = `Discovery-Run für ${projectId} läuft (${note})`;
+    await agency.updateJob(run.job_id, "running", summary);
+    store.update(run.job_id, { state: "running", agency_job_open: 1, worker_session_id: sessionId,
+      last_summary: summary, last_progress_at: now });
+  }
+  log("discover.started", { jobId: run.job_id, projectId, mode: config.runnerMode, session: sessionId, chars: prompt.length });
 }
 
 async function handleMerge({ config, agency, ao, store, run, job, pipeline, now }) {

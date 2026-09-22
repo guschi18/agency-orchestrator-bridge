@@ -14,7 +14,7 @@ Beide Quelldokumente bleiben als Rechercheanhang liegen. **Bei Widersprüchen gi
 
 | System | Ort | Stand |
 |---|---|---|
-| Agency | `github.com/browser-use/agency`, Commit `53651ce` (11.09.2026), lokal geplant unter `D:\Tools\Agency\agency` | noch nicht dauerhaft installiert |
+| Agency | `github.com/browser-use/agency`, Commit `53651ce` (11.09.2026), lokal geplant unter `D:\Tools\Agency-AO\Agency` | noch nicht dauerhaft installiert |
 | Agent Orchestrator (AO) | `D:\Tools\Agent_Orchestrator` (Fork `guschi18/agent-orchestrator` von `Untrivial-ai/agent-orchestrator`) | eingerichtet, Daemon läuft nur mit Desktop-App |
 | Bridge | neu, `D:\Tools\Agency\bridge` | noch nicht begonnen |
 

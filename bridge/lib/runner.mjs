@@ -21,9 +21,13 @@ export function runnerPaths(config, projectId) {
     skillDir: join(config.agencyPath, "skills", "agency"),
     pushCard: join(config.agencyPath, "scripts", "push-card.mjs"),
     agentWork: join(config.agencyPath, "agent-work"),
+    cardDir: join(config.agencyPath, "agent-work", `discovery-${projectId}`),
     meFile: join(config.profilDir, "me.md"),
     docFile: join(config.projectDocsDir, `${projectId}.md`),
     projectsFile: config.projectsFile,
+    exampleDir: join(config.profilDir, "karten-beispiel"),
+    // Von der Bridge vor dem Start erzeugt, ohne Modell. Siehe repo-map.mjs.
+    repoMapFile: join(config.laufzeitDir, `repo-map-${projectId}.md`),
   };
 }
 
@@ -39,19 +43,32 @@ export function buildRunnerPrompt({ projectId, projectPath, maxKarten = 3, agenc
    - ${p.docFile}  (Ziele, Quellen und Grenzen genau dieses Projekts)
    - ${p.projectsFile}  (Projekt-ID und Pfad — nie raten)
    - ${p.pushCard}  (so werden Karten gepusht)
+   - ${p.exampleDir}\\card.json und card.html  (fertiges Beispiel einer Karte: Format und Felder)
 
-2. Untersuche **nur** \`${projectPath}\` und **nur lesend**: Code, Tests, die in der
-   Projektdatei genannten Quellen, git log. Nichts ändern, nichts committen, nichts pushen,
-   keine \`.env\` lesen, keine Secrets in Karten schreiben.
+   Das Kartenformat steht damit vollständig fest. Lies **nicht** Agencys Quellcode
+   (\`app/\`, \`lib/\`, README), um es zu verstehen — das kostet nur Token.
+
+2. Lies zuerst ${p.repoMapFile}. Darin stehen — bereits erhoben, ohne dass es dich
+   einen Turn kostet — Dateibaum, Zeilenzahlen, Testdateien, Einstiegspunkte, die
+   letzten Commits und das Ungetrackte. Verschaffe dir **keinen** eigenen Überblick
+   mit \`ls\`, \`find\` oder \`git log\`: das ist doppelte Arbeit und teuer.
+
+3. Untersuche **nur** \`${projectPath}\` und **nur lesend**: gezielt die Dateien, die
+   nach der Repo-Karte zählen, dazu die in der Projektdatei genannten Quellen. Nichts
+   ändern, nichts committen, nichts pushen, keine \`.env\` lesen, keine Secrets in
+   Karten schreiben.
 
    Wichtig: Du läufst in einem eigenen AO-Arbeitsverzeichnis, nicht im Projektordner.
    Lies \`${projectPath}\` über den absoluten Pfad — dort stehen auch die Dateien, die
    nicht eingecheckt sind.
 
-3. Finde die wertvollsten Verbesserungen nach den Maßstäben der Projektdatei und pushe
+4. Finde die wertvollsten Verbesserungen nach den Maßstäben der Projektdatei und pushe
    **höchstens ${maxKarten} Karten** an die laufende Agency unter ${agencyUrl}
-   (POST /api/ideas mit Header \`x-radar-local-agent: 1\`, z. B.
-   \`node "${p.pushCard}" <meta.json>\` mit Arbeitsdateien unter ${p.agentWork}).
+   (POST /api/ideas mit Header \`x-radar-local-agent: 1\`). Lege \`card.json\`
+   und \`card.html\` ausschließlich unter ${p.cardDir} mit dem Write-Werkzeug an
+   und pushe jede Karte einzeln mit \`node "${p.pushCard}" <meta.json>\`. Das
+   Verzeichnis existiert bereits; benutze keine Shell-Umleitung, kein \`cat\`
+   und keine verketteten Shell-Befehle.
    Lieber weniger Karten als schwache — eine schwache Karte kostet eine echte Entscheidung.
 
    Jede Karte:
@@ -65,10 +82,11 @@ export function buildRunnerPrompt({ projectId, projectPath, maxKarten = 3, agenc
    - Karten-HTML: kein \`<a>\`, \`<script>\`, \`<svg>\`, keine Event-Handler, keine externen Bilder.
      Links nur als \`<button data-radar-action="open" data-radar-url="…">\`.
 
-4. Prüfe nach dem Push mit GET ${agencyUrl}/api/state (Header \`x-radar-local-agent: 1\`),
-   dass die Karten angekommen sind.
+5. Prüfe nach dem Push mit einem einzelnen \`node -e\`-Aufruf und \`fetch\`, dass
+   die Karten in GET ${agencyUrl}/api/state angekommen sind. Verwende keine
+   \`curl | grep\`-Pipe; erlaubt sind einzelne Node-Aufrufe.
 
-5. Antworte am Ende mit: Liste der Karten (id, dedupeKey, Titel, RISE) und was du nicht
+6. Antworte am Ende mit: Liste der Karten (id, dedupeKey, Titel, RISE) und was du nicht
    prüfen konntest.
 
 Du setzt nichts selbst um. Die Umsetzung startet erst, wenn der Nutzer eine Karte freigibt;
@@ -92,13 +110,19 @@ const CARD_STYLE = `<style>
 @media (max-width:420px){.aor{padding:14px}.aor dl{grid-template-columns:1fr;gap:0}.aor dt{margin-top:6px}}
 </style>`;
 
-export function runnerCardHtml({ projectId, projectPath, maxKarten, docFile, lastRunAt, lastRunNote }) {
+export const DEFAULT_COST_NOTE =
+  "grob 0,45 $ je Lauf (Hochrechnung; gemessen waren 2,71 $ — vor Sonnet, Repo-Karte und schlankem Präfix)";
+
+export function runnerCardHtml({ projectId, projectPath, maxKarten, docFile, lastRunAt, lastRunNote, costNote = DEFAULT_COST_NOTE }) {
   const rows = [
     ["Projekt", projectId],
     ["Ordner", String(projectPath).replaceAll("\\", "/")],
     ["Budget", `höchstens ${maxKarten} Karten`],
     ["Maßstab", String(docFile).replaceAll("\\", "/")],
-    ["Kosten", "rund 2,71 $ je Lauf (Messwert aus dem Testlauf)"],
+    // Kein Messwert mehr, sondern die Hochrechnung der Token-Analyse: der
+    // gemessene Lauf war Opus mit vollem Präfix und ohne Repo-Karte. Die alte
+    // Zahl bleibt daneben stehen, damit der Maßstab sichtbar bleibt.
+    ["Kosten", costNote],
     ["Zuletzt gestartet", lastRunAt ? `${lastRunAt}${lastRunNote ? ` — ${lastRunNote}` : ""}` : "noch nie"],
   ];
   return `${CARD_STYLE}<div class="aor">
@@ -113,13 +137,13 @@ Er ändert nichts und committet nichts — umgesetzt wird erst, was du danach ei
 </div>`;
 }
 
-export function runnerCard({ projectId, projectPath, maxKarten = 3, docFile, lastRunAt, lastRunNote }) {
+export function runnerCard({ projectId, projectPath, maxKarten = 3, docFile, lastRunAt, lastRunNote, costNote }) {
   return {
     project: projectId,
     category: projectId,
     headline: `Neue Vorschläge für ${projectId} suchen`.slice(0, 200),
     dedupeKey: runnerDedupeKey(projectId),
-    cardHtml: runnerCardHtml({ projectId, projectPath, maxKarten, docFile, lastRunAt, lastRunNote }),
+    cardHtml: runnerCardHtml({ projectId, projectPath, maxKarten, docFile, lastRunAt, lastRunNote, costNote }),
     // Agency sortiert den Stapel nach RISE. Der Knopf ist kein Befund, sondern
     // eine Möglichkeit — er gehört ans Ende: erst die angefangene Arbeit zu
     // Ende entscheiden, dann neue suchen. Deshalb bewusst der Bodenwert.

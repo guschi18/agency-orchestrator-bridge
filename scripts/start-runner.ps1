@@ -8,13 +8,13 @@
   Kartenbudget. Das Skript liest Projekt-ID, Pfad und Budget aus
   profil\ao-projects.json und profil\pipeline.json - geraten wird nichts.
 
-  Es schreibt den Auftrag nach laufzeit\runner-<projekt>.md, legt ihn in die
-  Zwischenablage und zeigt ihn an. Du startest damit eine AO-Session
-  (Claude/Opus) und fuegst den Text ein.
+  Es erhebt die Repo-Karte (laufzeit\repo-map-<projekt>.md, ohne Modell),
+  schreibt den Auftrag nach laufzeit\runner-<projekt>.md, legt ihn in die
+  Zwischenablage und zeigt ihn an. Du fuegst den Text in eine Session ein.
 
-  Bewusst ohne automatischen Spawn: ein Worker im Zielprojekt wuerde dort
-  einen Branch und einen Worktree anlegen - der Runner soll aber nur lesen.
-  Ein Lauf kostete im Test 2,71 $; er wird deshalb von Hand ausgeloest.
+  Bewusst ohne automatischen Spawn: dieses Skript ist der Weg ohne Browser.
+  Ueber die Karte "Runner starten" macht die Bridge dasselbe von allein - und
+  dort mit einer Kommandozeile, die das Praefix schlank haelt (siehe README).
 
 .PARAMETER ProjectId
   AO-Projekt-ID, wie sie in profil\ao-projects.json steht.
@@ -23,7 +23,7 @@
   Kartenbudget fuer diesen Lauf (Default: maxKarten aus pipeline.json).
 
 .PARAMETER AgencyPath
-  Agency-Klon mit dem Skill (Default: D:\Tools\Agency\agency).
+  Agency-Klon mit dem Skill (Default: D:\Tools\Agency-AO\Agency).
 
 .PARAMETER Port
   Port, auf dem Agency laeuft. Ohne Angabe sucht das Skript sie auf 3100 und
@@ -34,13 +34,13 @@
   Den Auftrag nicht in die Zwischenablage legen.
 
 .EXAMPLE
-  pwsh -File D:\agency-orchestrator-bridge\scripts\start-runner.ps1 -ProjectId polnisch
+  pwsh -File D:\Tools\Agency-AO\agency-orchestrator-bridge\scripts\start-runner.ps1 -ProjectId polnisch
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$ProjectId,
   [int]$MaxKarten = 0,
-  [string]$AgencyPath = 'D:\Tools\Agency\agency',
+  [string]$AgencyPath = 'D:\Tools\Agency-AO\Agency',
   [int]$Port = 0,
   [switch]$NoClipboard
 )
@@ -135,7 +135,7 @@ if (-not $NoClipboard) {
 }
 Write-Host ''
 Write-Host 'So geht es weiter:' -ForegroundColor Cyan
-Write-Host '  1. In der AO-App eine neue Session mit Claude/Opus oeffnen.'
+Write-Host '  1. In der AO-App eine neue Session mit Claude/Sonnet oeffnen.'
 Write-Host '  2. Den Auftrag einfuegen und abschicken.'
 Write-Host "  3. Karten im Feed ansehen: $AgencyUrl"
 Write-Host ''

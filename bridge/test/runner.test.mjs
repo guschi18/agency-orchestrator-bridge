@@ -7,12 +7,14 @@ import { openStore } from "../lib/store.mjs";
 
 const config = {
   agencyUrl: "http://localhost:3100",
-  agencyPath: "D:\\Tools\\Agency\\agency",
+  agencyPath: "D:\\Tools\\Agency-AO\\Agency",
   profilDir: "D:\\repo\\profil",
+  laufzeitDir: "D:\\repo\\laufzeit",
   projectDocsDir: "D:\\repo\\profil\\projekte",
   projectsFile: "D:\\repo\\profil\\ao-projects.json",
   runnerHarness: "claude-code",
-  runnerModel: "claude-opus-5",
+  runnerModel: "claude-sonnet-5",
+  runnerMode: "lokal",
   allowMerge: true,
   limits: {},
 };
@@ -33,6 +35,22 @@ test("der Auftrag nennt Pfad, Budget und Agency-URL wörtlich", () => {
   assert.match(text, /höchstens 3 Karten/);
   assert.match(text, /http:\/\/localhost:3100/);
   assert.match(text, /D:\\repo\\profil\\projekte\\polnisch\.md/);
+});
+
+test("der Auftrag verweist auf das Kartenbeispiel statt auf Agencys Quellcode", () => {
+  const text = prompt();
+  assert.match(text, /karten-beispiel\\card\.json/);
+  assert.match(text, /nicht\*\* Agencys Quellcode/);
+});
+
+test("der Auftrag schickt den Runner zur Repo-Karte, nicht auf eigene Erkundung", () => {
+  // Maßnahme 4: die Turns 8-13 gingen fuers Ueberblickverschaffen drauf. Jeder
+  // davon liest das ganze Praefix mit - deshalb steht der Verweis vor der
+  // Untersuchung, und das eigene Erkunden ist ausdruecklich untersagt.
+  const text = prompt();
+  assert.match(text, /D:\\repo\\laufzeit\\repo-map-polnisch\.md/);
+  assert.match(text, /keinen\*\* eigenen Überblick/);
+  assert.match(text, /git log/);
 });
 
 test("der Auftrag verbietet Schreiben und Secrets", () => {
@@ -102,8 +120,8 @@ function discoverJob(id = 5) {
   }) };
 }
 
-function fakes({ sessions = [] } = {}) {
-  const calls = { spawns: [], updates: [], cards: [], sends: 0 };
+function fakes({ sessions = [], alive = true } = {}) {
+  const calls = { spawns: [], starts: [], maps: [], updates: [], cards: [], sends: 0 };
   return { calls,
     agency: {
       jobs: async () => [discoverJob()],
@@ -116,54 +134,116 @@ function fakes({ sessions = [] } = {}) {
       spawn: async (body) => { calls.spawns.push(body); return { id: "pol-7" }; },
       send: async () => { calls.sends++; },
       prs: async () => [], reviews: async () => ({ runs: [] }),
+    },
+    // Kein Test startet je wirklich claude oder liest ein fremdes Repo.
+    runner: {
+      start: async (opts) => { calls.starts.push(opts); return { pid: 4711, logFile: opts.logFile }; },
+      alive: () => alive,
+      resolveBinary: () => "C:\\tools\\claude.exe",
+      writeRepoMap: async (opts) => { calls.maps.push(opts); return { file: opts.outFile, chars: 900 }; },
     } };
 }
 
-test("ein Klick startet genau eine Session mit Claude/Opus", async () => {
+async function run(f, over = {}) {
   const store = openStore(":memory:");
-  const f = fakes();
-  await tick({ config, pipeline, agency: f.agency, ao: f.ao, store, now: 0 });
+  await tick({ config, pipeline, agency: f.agency, ao: f.ao, runner: f.runner, store, now: 0, ...over });
+  return store;
+}
 
-  assert.equal(f.calls.spawns.length, 1);
-  const spawn = f.calls.spawns[0];
-  assert.equal(spawn.projectId, "polnisch");
-  assert.equal(spawn.displayName, "ag-5");
-  assert.equal(spawn.harness, "claude-code");
-  assert.equal(spawn.model, "claude-opus-5");
-  assert.match(spawn.prompt, /D:\\Polnisch/);
+test("ein Klick startet claude selbst und hält die Karte auf Working", async () => {
+  const f = fakes();
+  const store = await run(f);
+
+  assert.deepEqual(f.calls.spawns, [], "nicht über AO: dort ginge die Kommandozeile verloren");
+  assert.equal(f.calls.starts.length, 1);
+  const start = f.calls.starts[0];
+  assert.equal(start.binary, "C:\\tools\\claude.exe");
+  assert.equal(start.model, "claude-sonnet-5");
+  assert.match(start.prompt, /D:\\Polnisch/);
+  assert.deepEqual(start.addDirs, [
+    "D:\\Polnisch", "D:\\repo\\profil", "D:\\Tools\\Agency-AO\\Agency\\skills\\agency",
+    "D:\\Tools\\Agency-AO\\Agency\\scripts", "D:\\Tools\\Agency-AO\\Agency\\agent-work\\discovery-polnisch",
+  ]);
+  assert.equal(start.writeDir, "D:\\Tools\\Agency-AO\\Agency\\agent-work\\discovery-polnisch");
   assert.equal(f.calls.sends, 0, "der Runner geht nicht über den Orchestrator");
-  assert.equal(store.get(5).state, "completed");
+  assert.equal(store.get(5).state, "running");
+  assert.equal(store.get(5).agency_job_open, 1);
+  assert.equal(store.get(5).worker_session_id, "lokal:4711");
+  assert.match(f.calls.updates.at(-1)[2], /Discovery-Run.*läuft/);
 });
 
-test("der Knopf liegt danach wieder da, mit dem Stand des Laufs", async () => {
-  const store = openStore(":memory:");
+test("die Repo-Karte wird vor dem Start erhoben, nicht vom Runner selbst", async () => {
   const f = fakes();
-  await tick({ config, pipeline, agency: f.agency, ao: f.ao, store, now: Date.parse("2026-09-20T08:00:00Z") });
+  await run(f);
+  assert.equal(f.calls.maps.length, 1);
+  assert.equal(f.calls.maps[0].projectPath, "D:\\Polnisch");
+  assert.match(f.calls.maps[0].outFile, /repo-map-polnisch\.md$/);
+});
+
+test("scheitert die Repo-Karte, läuft der Runner trotzdem", async () => {
+  // Sie spart Turns, sie ist keine Bedingung. Ein Projekt ohne git waere sonst
+  // gar nicht mehr zu untersuchen.
+  const f = fakes();
+  f.runner.writeRepoMap = async () => { throw new Error("kein git"); };
+  await run(f);
+  assert.equal(f.calls.starts.length, 1);
+});
+
+test("BRIDGE_RUNNER_MODE=ao geht weiter über eine AO-Session", async () => {
+  const f = fakes();
+  await run(f, { config: { ...config, runnerMode: "ao" } });
+  assert.deepEqual(f.calls.starts, []);
+  assert.equal(f.calls.spawns.length, 1);
+  assert.equal(f.calls.spawns[0].model, "claude-sonnet-5");
+  assert.equal(f.calls.spawns[0].harness, "claude-code");
+  assert.equal(f.calls.spawns[0].displayName, "ag-5");
+});
+
+test("erst nach Prozessende liegt der Knopf wieder da", async () => {
+  const f = fakes();
+  const store = await run(f, { now: Date.parse("2026-09-20T08:00:00Z") });
+  assert.equal(f.calls.cards.length, 0);
+  f.agency.jobs = async () => [];
+  f.runner.alive = () => false;
+  await tick({ config, pipeline, agency: f.agency, ao: f.ao, runner: f.runner, store,
+    now: Date.parse("2026-09-20T08:02:00Z") });
   const card = f.calls.cards.at(-1);
   assert.equal(card.dedupeKey, "polnisch:runner");
-  assert.match(card.cardHtml, /2026-09-20 08:00/);
-  assert.match(card.cardHtml, /pol-7/);
+  assert.match(card.cardHtml, /2026-09-20 08:02/);
+  assert.match(card.cardHtml, /beendet \(Prozess 4711\)/);
+  assert.equal(store.get(5).state, "completed");
+  assert.equal(f.calls.updates.at(-1)[1], "done");
 });
 
 test("ein zweiter Klick bezahlt keinen zweiten Lauf", async () => {
+  const f = fakes({ alive: true });
   const store = openStore(":memory:");
-  const f = fakes({ sessions: [{ id: "pol-7", kind: "worker", displayName: "ag-5", createdAt: "1" }] });
-  await tick({ config, pipeline, agency: f.agency, ao: f.ao, store, now: 0 });
-  assert.deepEqual(f.calls.spawns, []);
+  // Ein Lauf steht schon im Gedaechtnis und sein Prozess lebt noch.
+  store.insert({ jobId: 4, ideaId: 9, ideaVersion: 1, dedupeKey: "polnisch:runner", headline: "x",
+    action: "discover", projectId: "polnisch", workerName: "ag-4", now: 0, card: {} });
+  store.update(4, { worker_session_id: "lokal:4711" });
+
+  await tick({ config, pipeline, agency: f.agency, ao: f.ao, runner: f.runner, store, now: 0 });
+  assert.deepEqual(f.calls.starts, []);
   assert.match(f.calls.updates.at(-1)[2], /läuft bereits/);
 });
 
-test("analysieren: false blockiert den Lauf, auch wenn umsetzen an ist", async () => {
-  const store = openStore(":memory:");
-  const f = fakes();
-  await tick({ config, pipeline: { polnisch: { analysieren: false, umsetzen: true } }, agency: f.agency, ao: f.ao, store, now: 0 });
+test("im AO-Modus fragt der Doppelklick-Schutz AO, nicht den Prozess", async () => {
+  const f = fakes({ sessions: [{ id: "pol-7", kind: "worker", displayName: "ag-5", createdAt: "1" }] });
+  await run(f, { config: { ...config, runnerMode: "ao" } });
   assert.deepEqual(f.calls.spawns, []);
+  assert.match(f.calls.updates.at(-1)[2], /läuft bereits \(Session pol-7\)/);
+});
+
+test("analysieren: false blockiert den Lauf, auch wenn umsetzen an ist", async () => {
+  const f = fakes();
+  await run(f, { pipeline: { polnisch: { analysieren: false, umsetzen: true } } });
+  assert.deepEqual(f.calls.starts, []);
   assert.match(f.calls.updates.at(-1)[2], /nicht zur Analyse freigegeben/);
 });
 
 test("umsetzen: false verhindert einen Lauf nicht — er liest ja nur", async () => {
-  const store = openStore(":memory:");
   const f = fakes();
-  await tick({ config, pipeline: { polnisch: { analysieren: true, umsetzen: false } }, agency: f.agency, ao: f.ao, store, now: 0 });
-  assert.equal(f.calls.spawns.length, 1);
+  await run(f, { pipeline: { polnisch: { analysieren: true, umsetzen: false } } });
+  assert.equal(f.calls.starts.length, 1);
 });
